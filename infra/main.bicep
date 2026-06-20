@@ -11,6 +11,7 @@ param processedContainerName string = 'processed-mp4'
 param queueName string = 'video-processing'
 param cosmosDatabaseName string = 'content-understanding'
 param cosmosContainerName string = 'media-records'
+param contentUnderstandingAccountName string
 param webContainerImage string
 param workerContainerImage string
 param containerRegistryName string
@@ -22,7 +23,6 @@ param authClientSecret string = ''
 param authTenantId string = ''
 @secure()
 param authSessionSecret string = ''
-param contentUnderstandingEndpoint string = ''
 param contentUnderstandingApiVersion string = '2026-05-01'
 param contentUnderstandingAnalyzerId string = 'prebuilt-video'
 param uploadWriteQueueMessage bool = false
@@ -30,6 +30,10 @@ param uploadWriteQueueMessage bool = false
 var storageBlobDataContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+var cognitiveServicesUserRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'a97b65f3-24c7-4388-baec-2e87135dc908'
 )
 var storageQueueDataContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -159,6 +163,20 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
+resource contentUnderstanding 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: contentUnderstandingAccountName
+  location: location
+  kind: 'AIServices'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    publicNetworkAccess: 'Enabled'
+    customSubDomainName: contentUnderstandingAccountName
+    disableLocalAuth: true
+  }
+}
+
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -225,7 +243,7 @@ resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
             { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
-            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
+            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
             { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
             { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
@@ -276,7 +294,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
             { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
-            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
+            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
             { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
             { name: 'APP_BASE_URL', value: webAppBaseUrl }
@@ -388,6 +406,16 @@ resource webCosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleA
   }
 }
 
+resource workerContentUnderstandingUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(contentUnderstanding.id, containerApp.name, cognitiveServicesUserRoleDefinitionId)
+  scope: contentUnderstanding
+  properties: {
+    principalId: containerApp.identity.principalId
+    roleDefinitionId: cognitiveServicesUserRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource systemTopic 'Microsoft.EventGrid/systemTopics@2022-06-15' = {
   name: '${storage.name}-blob-events'
   location: location
@@ -424,6 +452,7 @@ resource blobCreatedSubscription 'Microsoft.EventGrid/systemTopics/eventSubscrip
 
 output storageAccountUrl string = storageAccountUrl
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
+output contentUnderstandingEndpoint string = contentUnderstanding.properties.endpoint
 output containerAppIdentityPrincipalId string = containerApp.identity.principalId
 output webAppUrl string = webAppBaseUrl
 output webAppIdentityPrincipalId string = webApp.identity.principalId

@@ -13,11 +13,6 @@ on:
         required: true
         default: eastus
         type: string
-      content_understanding_endpoint:
-        description: Optional Foundry Content Understanding endpoint
-        required: false
-        default: ""
-        type: string
       content_understanding_api_version:
         description: Content Understanding API version
         required: true
@@ -75,6 +70,7 @@ jobs:
           echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
           echo "storage_account_name=cu${suffix}sa" >> "$GITHUB_OUTPUT"
           echo "cosmos_account_name=cu${suffix}cosmos" >> "$GITHUB_OUTPUT"
+          echo "content_understanding_account_name=cu${suffix}ai" >> "$GITHUB_OUTPUT"
           echo "web_app_name=cu-${suffix}-web" >> "$GITHUB_OUTPUT"
           echo "container_app_name=cu-${suffix}-worker" >> "$GITHUB_OUTPUT"
           echo "environment_name=cu-${suffix}-env" >> "$GITHUB_OUTPUT"
@@ -134,6 +130,7 @@ jobs:
             --parameters \
               storageAccountName="${{ steps.compute_names.outputs.storage_account_name }}" \
               cosmosAccountName="${{ steps.compute_names.outputs.cosmos_account_name }}" \
+              contentUnderstandingAccountName="${{ steps.compute_names.outputs.content_understanding_account_name }}" \
               webAppName="${{ steps.compute_names.outputs.web_app_name }}" \
               containerAppName="${{ steps.compute_names.outputs.container_app_name }}" \
               environmentName="${{ steps.compute_names.outputs.environment_name }}" \
@@ -143,7 +140,6 @@ jobs:
               workerContainerImage="${{ steps.build_and_push_worker_image.outputs.image_ref }}" \
               containerRegistryName="${{ steps.compute_names.outputs.registry_name }}" \
               containerRegistryLoginServer="${{ steps.build_and_push_web_image.outputs.login_server }}" \
-              contentUnderstandingEndpoint="${{ inputs.content_understanding_endpoint }}" \
               contentUnderstandingApiVersion="${{ inputs.content_understanding_api_version }}" \
               contentUnderstandingAnalyzerId="${{ inputs.content_understanding_analyzer_id }}" \
               authClientId="${{ secrets.APP_ENTRA_ID_CLIENT_ID }}" \
@@ -156,6 +152,7 @@ jobs:
           echo "web_app_url=$web_app_url" >> "$GITHUB_OUTPUT"
           echo "storage_account_url=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.storageAccountUrl.value')" >> "$GITHUB_OUTPUT"
           echo "cosmos_endpoint=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.cosmosEndpoint.value')" >> "$GITHUB_OUTPUT"
+          echo "content_understanding_endpoint=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.contentUnderstandingEndpoint.value')" >> "$GITHUB_OUTPUT"
 
       - name: Summarize deployment
         run: |
@@ -166,7 +163,10 @@ jobs:
             echo "- Resource group: ${{ inputs.resource_group_name }}"
             echo "- Frontend/API container app: ${{ steps.compute_names.outputs.web_app_name }}"
             echo "- Worker container app: ${{ steps.compute_names.outputs.container_app_name }}"
+            echo "- Content Understanding resource: ${{ steps.compute_names.outputs.content_understanding_account_name }}"
+            echo "- Content Understanding endpoint: ${{ steps.deploy_infra.outputs.content_understanding_endpoint }}"
             echo "- Container registry: ${{ steps.compute_names.outputs.registry_name }}"
             echo ""
+            echo "The worker managed identity is granted Cognitive Services User on the provisioned Content Understanding resource."
             echo "If the Entra auth secrets are not configured, the site runs in demo sign-in mode."
           } >> "$GITHUB_STEP_SUMMARY"

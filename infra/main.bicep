@@ -2,6 +2,8 @@ param location string = resourceGroup().location
 param environmentName string = 'content-understanding-env'
 param storageAccountName string
 param cosmosAccountName string
+param webAppName string
+param appServicePlanName string = 'content-understanding-plan'
 param containerAppName string = 'ffmpeg-worker'
 param logAnalyticsName string = 'content-understanding-logs'
 param uploadContainerName string = 'incoming-avi'
@@ -10,9 +12,27 @@ param queueName string = 'video-processing'
 param cosmosDatabaseName string = 'content-understanding'
 param cosmosContainerName string = 'media-records'
 param containerImage string
+param appTitle string = 'Content Understanding Hub'
+param authClientId string = ''
+@secure()
+param authClientSecret string = ''
+param authTenantId string = ''
+@secure()
+param authSessionSecret string = ''
 param contentUnderstandingEndpoint string = ''
+param contentUnderstandingApiVersion string = '2026-05-01'
 param contentUnderstandingAnalyzerId string = 'prebuilt-video'
-param appBaseUrl string = 'https://example.contoso.com'
+param uploadWriteQueueMessage bool = false
+
+var storageBlobDataContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+var storageQueueDataContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+)
+var cosmosBuiltInDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -134,6 +154,62 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
+resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: appServicePlanName
+  location: location
+  kind: 'linux'
+  sku: {
+    name: 'B1'
+    tier: 'Basic'
+  }
+  properties: {
+    reserved: true
+  }
+}
+
+resource webApp 'Microsoft.Web/sites@2023-12-01' = {
+  name: webAppName
+  location: location
+  kind: 'app,linux'
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    serverFarmId: appServicePlan.id
+    httpsOnly: true
+    siteConfig: {
+      linuxFxVersion: 'NODE|20-lts'
+      appCommandLine: 'node server.js'
+      alwaysOn: true
+      minTlsVersion: '1.2'
+      appSettings: [
+        { name: 'APP_BASE_URL', value: 'https://${webApp.properties.defaultHostName}' }
+        { name: 'NEXT_PUBLIC_APP_BASE_URL', value: 'https://${webApp.properties.defaultHostName}' }
+        { name: 'NEXT_PUBLIC_APP_TITLE', value: appTitle }
+        { name: 'NODE_ENV', value: 'production' }
+        { name: 'PORT', value: '8080' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
+        { name: 'ENTRA_ID_CLIENT_ID', value: authClientId }
+        { name: 'ENTRA_ID_CLIENT_SECRET', value: authClientSecret }
+        { name: 'ENTRA_ID_TENANT_ID', value: authTenantId }
+        { name: 'AUTH_SESSION_SECRET', value: authSessionSecret }
+        { name: 'AZURE_STORAGE_ACCOUNT_URL', value: 'https://${storage.name}.blob.core.windows.net' }
+        { name: 'AZURE_STORAGE_UPLOAD_CONTAINER', value: uploadContainerName }
+        { name: 'AZURE_STORAGE_PROCESSED_CONTAINER', value: processedContainerName }
+        { name: 'AZURE_STORAGE_QUEUE_NAME', value: queueName }
+        { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
+        { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
+        { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
+        { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
+        { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
+        { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+        { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
+      ]
+    }
+  }
+}
+
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
@@ -167,8 +243,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
             { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
             { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
+            { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
-            { name: 'APP_BASE_URL', value: appBaseUrl }
+            { name: 'APP_BASE_URL', value: 'https://${webApp.properties.defaultHostName}' }
           ]
         }
       ]
@@ -186,6 +263,66 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 queueLength: '1'
               }
               identity: 'system'
+            }
+          }
+
+          resource workerBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+            name: guid(storage.id, containerApp.identity.principalId, storageBlobDataContributorRoleDefinitionId)
+            scope: storage
+            properties: {
+              principalId: containerApp.identity.principalId
+              roleDefinitionId: storageBlobDataContributorRoleDefinitionId
+              principalType: 'ServicePrincipal'
+            }
+          }
+
+          resource workerQueueDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+            name: guid(storage.id, containerApp.identity.principalId, storageQueueDataContributorRoleDefinitionId)
+            scope: storage
+            properties: {
+              principalId: containerApp.identity.principalId
+              roleDefinitionId: storageQueueDataContributorRoleDefinitionId
+              principalType: 'ServicePrincipal'
+            }
+          }
+
+          resource webBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+            name: guid(storage.id, webApp.identity.principalId, storageBlobDataContributorRoleDefinitionId)
+            scope: storage
+            properties: {
+              principalId: webApp.identity.principalId
+              roleDefinitionId: storageBlobDataContributorRoleDefinitionId
+              principalType: 'ServicePrincipal'
+            }
+          }
+
+          resource webQueueDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+            name: guid(storage.id, webApp.identity.principalId, storageQueueDataContributorRoleDefinitionId)
+            scope: storage
+            properties: {
+              principalId: webApp.identity.principalId
+              roleDefinitionId: storageQueueDataContributorRoleDefinitionId
+              principalType: 'ServicePrincipal'
+            }
+          }
+
+          resource workerCosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+            parent: cosmos
+            name: guid(cosmos.id, containerApp.identity.principalId, cosmosBuiltInDataContributorRoleDefinitionId)
+            properties: {
+              principalId: containerApp.identity.principalId
+              roleDefinitionId: cosmosBuiltInDataContributorRoleDefinitionId
+              scope: cosmos.id
+            }
+          }
+
+          resource webCosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+            parent: cosmos
+            name: guid(cosmos.id, webApp.identity.principalId, cosmosBuiltInDataContributorRoleDefinitionId)
+            properties: {
+              principalId: webApp.identity.principalId
+              roleDefinitionId: cosmosBuiltInDataContributorRoleDefinitionId
+              scope: cosmos.id
             }
           }
         ]
@@ -231,3 +368,5 @@ resource blobCreatedSubscription 'Microsoft.EventGrid/systemTopics/eventSubscrip
 output storageAccountUrl string = 'https://${storage.name}.blob.core.windows.net'
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
 output containerAppIdentityPrincipalId string = containerApp.identity.principalId
+output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
+output webAppIdentityPrincipalId string = webApp.identity.principalId

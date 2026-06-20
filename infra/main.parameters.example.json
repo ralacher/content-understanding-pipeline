@@ -8,14 +8,20 @@
     "cosmosAccountName": {
       "value": "yourcosmosacct"
     },
+    "webAppName": {
+      "value": "your-content-understanding-webapp"
+    },
     "containerImage": {
       "value": "myregistry.azurecr.io/content-understanding-worker:latest"
     },
     "contentUnderstandingEndpoint": {
       "value": "https://your-foundry-resource.cognitiveservices.azure.com"
     },
-    "appBaseUrl": {
-      "value": "https://your-app-hostname.azurewebsites.net"
+    "contentUnderstandingApiVersion": {
+      "value": "2026-05-01"
+    },
+    "contentUnderstandingAnalyzerId": {
+      "value": "prebuilt-video"
     }
   }
 }

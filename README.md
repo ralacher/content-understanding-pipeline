@@ -66,13 +66,41 @@ Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 ## Azure deployment notes
 
 1. Deploy the Bicep template in `/infra/main.bicep`.
-2. Assign the Container App managed identity these roles:
-   - **Storage Blob Data Contributor**
-   - **Storage Queue Data Contributor**
-   - **Cosmos DB Built-in Data Contributor**
-   - Access to the Foundry Content Understanding resource.
-3. Register an Entra application for the frontend callback URL: `https://<your-host>/api/auth/callback`.
-4. Set the environment variables for the web host and worker container.
+2. The template now provisions:
+   - Blob Storage, Queue Storage, Cosmos DB, Event Grid, and the worker Container App
+   - a Linux App Service plan and Web App for the Next.js frontend
+   - managed identity role assignments for Storage and Cosmos DB for both the web app and worker
+3. If you want Microsoft Entra sign-in in the deployed test app, register an Entra application for `https://<your-host>/api/auth/callback` and provide the corresponding secrets during deployment. If you skip those settings, the deployed app runs in demo sign-in mode.
+4. If you supply a `CONTENT_UNDERSTANDING_ENDPOINT`, grant the worker managed identity access to that Foundry Content Understanding resource.
+5. Set the environment variables for the web host and worker container.
+
+## GitHub Actions test deployment
+
+This repository includes manual GitHub Actions workflows to deploy and tear down a disposable Azure test environment:
+
+- `/home/runner/work/content-understanding-pipeline/content-understanding-pipeline/.github/workflows/deploy-test-environment.yml`
+- `/home/runner/work/content-understanding-pipeline/content-understanding-pipeline/.github/workflows/destroy-test-environment.yml`
+
+Configure these GitHub repository secrets before running the deployment workflow:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+Optional application secrets:
+
+- `APP_ENTRA_ID_CLIENT_ID`
+- `APP_ENTRA_ID_CLIENT_SECRET`
+- `APP_ENTRA_ID_TENANT_ID`
+- `APP_AUTH_SESSION_SECRET`
+
+The deployment workflow:
+
+1. validates the app with `npm run lint`, `npm run build`, and `npm run build:worker`
+2. builds and pushes the worker image to a temporary Azure Container Registry
+3. deploys the Azure infrastructure from `/infra/main.bicep`
+4. publishes the Next.js standalone output to the provisioned Azure Web App
+5. writes the deployed URL into the workflow summary
 
 ## Architecture
 

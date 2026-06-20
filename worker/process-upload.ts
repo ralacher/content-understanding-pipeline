@@ -4,9 +4,9 @@ import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
 import { DefaultAzureCredential } from "@azure/identity";
 import { QueueClient } from "@azure/storage-queue";
-import { normalizeAnalysisResult } from "@/lib/analysis";
-import { getRuntimeConfig, isCloudConfigured } from "@/lib/config";
-import { MediaRecord } from "@/lib/domain";
+import { normalizeAnalysisResult } from "../lib/analysis";
+import { getRuntimeConfig, isCloudConfigured } from "../lib/config";
+import { MediaRecord } from "../lib/domain";
 import {
   buildProcessedBlobName,
   buildPlaybackUrl,
@@ -16,7 +16,7 @@ import {
   queueRecordForProcessing,
   uploadProcessedMp4,
   upsertMediaRecord,
-} from "@/lib/storage";
+} from "../lib/storage";
 
 interface QueuePayload {
   recordId?: string;

@@ -1,4 +1,4 @@
-import { MediaRecord } from "@/lib/domain";
+import { MediaRecord } from "./domain";
 
 const now = Date.now();
 

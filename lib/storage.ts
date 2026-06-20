@@ -11,10 +11,10 @@ import {
   generateBlobSASQueryParameters,
 } from "@azure/storage-blob";
 import { QueueClient } from "@azure/storage-queue";
-import { getRuntimeConfig, isCloudConfigured } from "@/lib/config";
-import { demoRecords } from "@/lib/demo-data";
-import { DashboardSnapshot, MediaRecord } from "@/lib/domain";
-import { slugifyFileName, sortRecords } from "@/lib/utils";
+import { getRuntimeConfig, isCloudConfigured } from "./config";
+import { demoRecords } from "./demo-data";
+import { DashboardSnapshot, MediaRecord } from "./domain";
+import { slugifyFileName, sortRecords } from "./utils";
 
 const DEMO_DB_PATH = "/tmp/content-understanding-pipeline/demo-records.json";
 const DEMO_UPLOAD_PATH = "/tmp/content-understanding-pipeline/uploads";

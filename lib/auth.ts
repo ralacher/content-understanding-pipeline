@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import { JWTPayload, jwtVerify, SignJWT } from "jose";
-import { getRuntimeConfig, isAuthConfigured } from "@/lib/config";
+import { getRuntimeConfig, isAuthConfigured } from "./config";
 
 const SESSION_COOKIE = "content-understanding-session";
 export const AUTH_STATE_COOKIE = "content-understanding-auth-state";

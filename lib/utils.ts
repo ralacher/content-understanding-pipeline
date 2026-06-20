@@ -1,4 +1,4 @@
-import { MediaRecord, ProcessingStatus } from "@/lib/domain";
+import { MediaRecord, ProcessingStatus } from "./domain";
 
 export function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat("en", {

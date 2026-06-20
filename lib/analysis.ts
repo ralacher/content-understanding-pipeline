@@ -1,4 +1,4 @@
-import { AnalysisSection, ContentUnderstandingSummary } from "@/lib/domain";
+import { AnalysisSection, ContentUnderstandingSummary } from "./domain";
 
 function coerceStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {

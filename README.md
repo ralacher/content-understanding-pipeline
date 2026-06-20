@@ -78,8 +78,8 @@ Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 
 This repository includes manual GitHub Actions workflows to deploy and tear down a disposable Azure test environment:
 
-- `/home/runner/work/content-understanding-pipeline/content-understanding-pipeline/.github/workflows/deploy-test-environment.yml`
-- `/home/runner/work/content-understanding-pipeline/content-understanding-pipeline/.github/workflows/destroy-test-environment.yml`
+- `.github/workflows/deploy-test-environment.yml`
+- `.github/workflows/destroy-test-environment.yml`
 
 Configure these GitHub repository secrets before running the deployment workflow:
 

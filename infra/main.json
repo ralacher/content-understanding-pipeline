@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11624715172438960190"
+      "templateHash": "10346480203057118128"
     }
   },
   "parameters": {
@@ -111,7 +111,8 @@
     "storageBlobDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "storageQueueDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
     "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-    "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]"
+    "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
+    "storageAccountUrl": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
   },
   "resources": [
     {
@@ -350,7 +351,7 @@
                 },
                 {
                   "name": "AZURE_STORAGE_ACCOUNT_URL",
-                  "value": "[format('https://{0}.blob.core.windows.net', parameters('storageAccountName'))]"
+                  "value": "[variables('storageAccountUrl')]"
                 },
                 {
                   "name": "AZURE_STORAGE_UPLOAD_CONTAINER",
@@ -447,7 +448,7 @@
               "env": [
                 {
                   "name": "AZURE_STORAGE_ACCOUNT_URL",
-                  "value": "[format('https://{0}.blob.core.windows.net', parameters('storageAccountName'))]"
+                  "value": "[variables('storageAccountUrl')]"
                 },
                 {
                   "name": "AZURE_STORAGE_UPLOAD_CONTAINER",
@@ -689,7 +690,7 @@
   "outputs": {
     "storageAccountUrl": {
       "type": "string",
-      "value": "[format('https://{0}.blob.core.windows.net', parameters('storageAccountName'))]"
+      "value": "[variables('storageAccountUrl')]"
     },
     "cosmosEndpoint": {
       "type": "string",

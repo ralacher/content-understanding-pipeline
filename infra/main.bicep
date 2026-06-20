@@ -40,6 +40,7 @@ var acrPullRoleDefinitionId = subscriptionResourceId(
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 )
 var cosmosBuiltInDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+var storageAccountUrl = 'https://${storage.name}.blob.${environment().suffixes.storage}'
 var webAppBaseUrl = 'https://${webAppName}.${managedEnvironment.properties.defaultDomain}'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -166,7 +167,7 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
         customerId: logAnalytics.properties.customerId
-        sharedKey: listKeys(logAnalytics.id, logAnalytics.apiVersion).primarySharedKey
+        sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
   }
@@ -217,7 +218,7 @@ resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ENTRA_ID_CLIENT_SECRET', value: authClientSecret }
             { name: 'ENTRA_ID_TENANT_ID', value: authTenantId }
             { name: 'AUTH_SESSION_SECRET', value: authSessionSecret }
-            { name: 'AZURE_STORAGE_ACCOUNT_URL', value: 'https://${storage.name}.blob.core.windows.net' }
+            { name: 'AZURE_STORAGE_ACCOUNT_URL', value: storageAccountUrl }
             { name: 'AZURE_STORAGE_UPLOAD_CONTAINER', value: uploadContainerName }
             { name: 'AZURE_STORAGE_PROCESSED_CONTAINER', value: processedContainerName }
             { name: 'AZURE_STORAGE_QUEUE_NAME', value: queueName }
@@ -268,7 +269,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '2Gi'
           }
           env: [
-            { name: 'AZURE_STORAGE_ACCOUNT_URL', value: 'https://${storage.name}.blob.core.windows.net' }
+            { name: 'AZURE_STORAGE_ACCOUNT_URL', value: storageAccountUrl }
             { name: 'AZURE_STORAGE_UPLOAD_CONTAINER', value: uploadContainerName }
             { name: 'AZURE_STORAGE_PROCESSED_CONTAINER', value: processedContainerName }
             { name: 'AZURE_STORAGE_QUEUE_NAME', value: queueName }
@@ -290,6 +291,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         rules: [
           {
             name: 'queue-scale'
+            #disable-next-line BCP037 // Azure queue scale rules support managed identity; the current Bicep type definition is stale.
             identity: 'system'
             custom: {
               type: 'azure-queue'
@@ -420,7 +422,7 @@ resource blobCreatedSubscription 'Microsoft.EventGrid/systemTopics/eventSubscrip
   }
 }
 
-output storageAccountUrl string = 'https://${storage.name}.blob.core.windows.net'
+output storageAccountUrl string = storageAccountUrl
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
 output containerAppIdentityPrincipalId string = containerApp.identity.principalId
 output webAppUrl string = webAppBaseUrl

@@ -1,7 +1,6 @@
 import appInsights from "applicationinsights";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __contentUnderstandingTelemetryInitialized: boolean | undefined;
 }
 

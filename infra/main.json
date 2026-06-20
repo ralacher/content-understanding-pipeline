@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "10346480203057118128"
+      "templateHash": "3161912394652339623"
     }
   },
   "parameters": {
@@ -58,6 +58,9 @@
       "type": "string",
       "defaultValue": "media-records"
     },
+    "contentUnderstandingAccountName": {
+      "type": "string"
+    },
     "webContainerImage": {
       "type": "string"
     },
@@ -90,10 +93,6 @@
       "type": "securestring",
       "defaultValue": ""
     },
-    "contentUnderstandingEndpoint": {
-      "type": "string",
-      "defaultValue": ""
-    },
     "contentUnderstandingApiVersion": {
       "type": "string",
       "defaultValue": "2026-05-01"
@@ -109,6 +108,7 @@
   },
   "variables": {
     "storageBlobDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "cognitiveServicesUserRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
     "storageQueueDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
     "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
     "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
@@ -262,6 +262,21 @@
       ]
     },
     {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-10-01",
+      "name": "[parameters('contentUnderstandingAccountName')]",
+      "location": "[parameters('location')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "publicNetworkAccess": "Enabled",
+        "customSubDomainName": "[parameters('contentUnderstandingAccountName')]",
+        "disableLocalAuth": true
+      }
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[parameters('environmentName')]",
@@ -379,7 +394,7 @@
                 },
                 {
                   "name": "CONTENT_UNDERSTANDING_ENDPOINT",
-                  "value": "[parameters('contentUnderstandingEndpoint')]"
+                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
                 },
                 {
                   "name": "CONTENT_UNDERSTANDING_API_VERSION",
@@ -412,6 +427,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
@@ -476,7 +492,7 @@
                 },
                 {
                   "name": "CONTENT_UNDERSTANDING_ENDPOINT",
-                  "value": "[parameters('contentUnderstandingEndpoint')]"
+                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
                 },
                 {
                   "name": "CONTENT_UNDERSTANDING_API_VERSION",
@@ -523,6 +539,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
@@ -645,6 +662,21 @@
       ]
     },
     {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), parameters('containerAppName'), variables('cognitiveServicesUserRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('cognitiveServicesUserRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.EventGrid/systemTopics",
       "apiVersion": "2022-06-15",
       "name": "[format('{0}-blob-events', parameters('storageAccountName'))]",
@@ -695,6 +727,10 @@
     "cosmosEndpoint": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), '2024-05-15').documentEndpoint]"
+    },
+    "contentUnderstandingEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
     },
     "containerAppIdentityPrincipalId": {
       "type": "string",

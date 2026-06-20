@@ -7,6 +7,7 @@ import { QueueClient } from "@azure/storage-queue";
 import { normalizeAnalysisResult } from "../lib/analysis";
 import { getRuntimeConfig, isCloudConfigured } from "../lib/config";
 import { MediaRecord } from "../lib/domain";
+import { initializeTelemetry } from "../lib/telemetry";
 import {
   buildProcessedBlobName,
   buildPlaybackUrl,
@@ -25,6 +26,8 @@ interface QueuePayload {
     url?: string;
   };
 }
+
+initializeTelemetry(process.env.APPLICATIONINSIGHTS_ROLE_NAME || "worker");
 
 function runFfmpeg(inputPath: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {

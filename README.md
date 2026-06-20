@@ -40,6 +40,8 @@ The app runs in **demo mode** when Azure environment variables are missing. Demo
 - `CONTENT_UNDERSTANDING_ENDPOINT`
 - `CONTENT_UNDERSTANDING_API_VERSION`
 - `CONTENT_UNDERSTANDING_ANALYZER_ID`
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` (optional)
+- `APPLICATIONINSIGHTS_ROLE_NAME` (optional)
 - `CONTENT_UNDERSTANDING_MAX_POLLS` (optional)
 - `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` (optional)
 - `UPLOAD_WRITE_QUEUE_MESSAGE` (optional, default `false`)
@@ -50,6 +52,8 @@ The app runs in **demo mode** when Azure environment variables are missing. Demo
 
 Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` (optional)
+- `APPLICATIONINSIGHTS_ROLE_NAME` (optional)
 - `WORKER_POLL_INTERVAL_MS`
 - `WORKER_QUEUE_VISIBILITY_TIMEOUT`
 - `WORKER_TMP_DIR`
@@ -67,12 +71,12 @@ Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 
 1. Deploy the Bicep template in `/infra/main.bicep`.
 2. The template now provisions:
-   - Blob Storage, Queue Storage, Cosmos DB, Event Grid, and the worker Container App
-   - a Linux App Service plan and Web App for the Next.js frontend
-   - managed identity role assignments for Storage and Cosmos DB for both the web app and worker
+   - Blob Storage, Queue Storage, Cosmos DB, Event Grid, a public frontend/API Container App, and the worker Container App
+   - Log Analytics and Application Insights for both runtime containers
+   - managed identity role assignments for Storage, Cosmos DB, and Azure Container Registry pulls for both container apps
 3. If you want Microsoft Entra sign-in in the deployed test app, register an Entra application for `https://<your-host>/api/auth/callback` and provide the corresponding secrets during deployment. If you skip those settings, the deployed app runs in demo sign-in mode.
 4. If you supply a `CONTENT_UNDERSTANDING_ENDPOINT`, grant the worker managed identity access to that Foundry Content Understanding resource.
-5. Set the environment variables for the web host and worker container.
+5. Build and publish both the frontend/API and worker container images, then set the environment variables for both containers.
 
 ## GitHub Actions test deployment
 
@@ -97,9 +101,9 @@ Optional application secrets:
 The deployment workflow:
 
 1. validates the app with `npm run lint`, `npm run build`, and `npm run build:worker`
-2. builds and pushes the worker image to a temporary Azure Container Registry
+2. builds and pushes the frontend/API and worker images to a temporary Azure Container Registry
 3. deploys the Azure infrastructure from `/infra/main.bicep`
-4. publishes the Next.js standalone output to the provisioned Azure Web App
+4. configures both Azure Container Apps to pull and run the published images
 5. writes the deployed URL into the workflow summary
 
 ## Architecture

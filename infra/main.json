@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "937335865610403582"
+      "templateHash": "11624715172438960190"
     }
   },
   "parameters": {
@@ -26,10 +26,6 @@
     "webAppName": {
       "type": "string"
     },
-    "appServicePlanName": {
-      "type": "string",
-      "defaultValue": "content-understanding-plan"
-    },
     "containerAppName": {
       "type": "string",
       "defaultValue": "ffmpeg-worker"
@@ -37,6 +33,10 @@
     "logAnalyticsName": {
       "type": "string",
       "defaultValue": "content-understanding-logs"
+    },
+    "applicationInsightsName": {
+      "type": "string",
+      "defaultValue": "content-understanding-ai"
     },
     "uploadContainerName": {
       "type": "string",
@@ -58,7 +58,16 @@
       "type": "string",
       "defaultValue": "media-records"
     },
-    "containerImage": {
+    "webContainerImage": {
+      "type": "string"
+    },
+    "workerContainerImage": {
+      "type": "string"
+    },
+    "containerRegistryName": {
+      "type": "string"
+    },
+    "containerRegistryLoginServer": {
       "type": "string"
     },
     "appTitle": {
@@ -101,8 +110,8 @@
   "variables": {
     "storageBlobDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "storageQueueDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
-    "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
-    "webAppBaseUrl": "[format('https://{0}.azurewebsites.net', parameters('webAppName'))]"
+    "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+    "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]"
   },
   "resources": [
     {
@@ -116,6 +125,20 @@
         },
         "retentionInDays": 30
       }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[parameters('applicationInsightsName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName'))]"
+      ]
     },
     {
       "type": "Microsoft.Storage/storageAccounts",
@@ -256,131 +279,140 @@
       ]
     },
     {
-      "type": "Microsoft.Web/serverfarms",
-      "apiVersion": "2023-12-01",
-      "name": "[parameters('appServicePlanName')]",
-      "location": "[parameters('location')]",
-      "kind": "linux",
-      "sku": {
-        "name": "B1",
-        "tier": "Basic"
-      },
-      "properties": {
-        "reserved": true
-      }
-    },
-    {
-      "type": "Microsoft.Web/sites",
-      "apiVersion": "2023-12-01",
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
       "name": "[parameters('webAppName')]",
       "location": "[parameters('location')]",
-      "kind": "app,linux",
       "identity": {
         "type": "SystemAssigned"
       },
       "properties": {
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
-        "httpsOnly": true,
-        "siteConfig": {
-          "linuxFxVersion": "NODE|20-lts",
-          "appCommandLine": "node server.js",
-          "alwaysOn": true,
-          "minTlsVersion": "1.2",
-          "appSettings": [
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "allowInsecure": false,
+            "targetPort": 8080
+          },
+          "registries": [
             {
-              "name": "APP_BASE_URL",
-              "value": "[variables('webAppBaseUrl')]"
-            },
-            {
-              "name": "NEXT_PUBLIC_APP_BASE_URL",
-              "value": "[variables('webAppBaseUrl')]"
-            },
-            {
-              "name": "NEXT_PUBLIC_APP_TITLE",
-              "value": "[parameters('appTitle')]"
-            },
-            {
-              "name": "NODE_ENV",
-              "value": "production"
-            },
-            {
-              "name": "PORT",
-              "value": "8080"
-            },
-            {
-              "name": "WEBSITE_RUN_FROM_PACKAGE",
-              "value": "1"
-            },
-            {
-              "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
-              "value": "false"
-            },
-            {
-              "name": "ENTRA_ID_CLIENT_ID",
-              "value": "[parameters('authClientId')]"
-            },
-            {
-              "name": "ENTRA_ID_CLIENT_SECRET",
-              "value": "[parameters('authClientSecret')]"
-            },
-            {
-              "name": "ENTRA_ID_TENANT_ID",
-              "value": "[parameters('authTenantId')]"
-            },
-            {
-              "name": "AUTH_SESSION_SECRET",
-              "value": "[parameters('authSessionSecret')]"
-            },
-            {
-              "name": "AZURE_STORAGE_ACCOUNT_URL",
-              "value": "[format('https://{0}.blob.core.windows.net', parameters('storageAccountName'))]"
-            },
-            {
-              "name": "AZURE_STORAGE_UPLOAD_CONTAINER",
-              "value": "[parameters('uploadContainerName')]"
-            },
-            {
-              "name": "AZURE_STORAGE_PROCESSED_CONTAINER",
-              "value": "[parameters('processedContainerName')]"
-            },
-            {
-              "name": "AZURE_STORAGE_QUEUE_NAME",
-              "value": "[parameters('queueName')]"
-            },
-            {
-              "name": "AZURE_COSMOS_ENDPOINT",
-              "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), '2024-05-15').documentEndpoint]"
-            },
-            {
-              "name": "AZURE_COSMOS_DATABASE",
-              "value": "[parameters('cosmosDatabaseName')]"
-            },
-            {
-              "name": "AZURE_COSMOS_CONTAINER",
-              "value": "[parameters('cosmosContainerName')]"
-            },
-            {
-              "name": "CONTENT_UNDERSTANDING_ENDPOINT",
-              "value": "[parameters('contentUnderstandingEndpoint')]"
-            },
-            {
-              "name": "CONTENT_UNDERSTANDING_API_VERSION",
-              "value": "[parameters('contentUnderstandingApiVersion')]"
-            },
-            {
-              "name": "CONTENT_UNDERSTANDING_ANALYZER_ID",
-              "value": "[parameters('contentUnderstandingAnalyzerId')]"
-            },
-            {
-              "name": "UPLOAD_WRITE_QUEUE_MESSAGE",
-              "value": "[string(parameters('uploadWriteQueueMessage'))]"
+              "server": "[parameters('containerRegistryLoginServer')]",
+              "identity": "system"
             }
           ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "frontend-api",
+              "image": "[parameters('webContainerImage')]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                {
+                  "name": "APP_BASE_URL",
+                  "value": "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "NEXT_PUBLIC_APP_BASE_URL",
+                  "value": "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "NEXT_PUBLIC_APP_TITLE",
+                  "value": "[parameters('appTitle')]"
+                },
+                {
+                  "name": "NODE_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "PORT",
+                  "value": "8080"
+                },
+                {
+                  "name": "ENTRA_ID_CLIENT_ID",
+                  "value": "[parameters('authClientId')]"
+                },
+                {
+                  "name": "ENTRA_ID_CLIENT_SECRET",
+                  "value": "[parameters('authClientSecret')]"
+                },
+                {
+                  "name": "ENTRA_ID_TENANT_ID",
+                  "value": "[parameters('authTenantId')]"
+                },
+                {
+                  "name": "AUTH_SESSION_SECRET",
+                  "value": "[parameters('authSessionSecret')]"
+                },
+                {
+                  "name": "AZURE_STORAGE_ACCOUNT_URL",
+                  "value": "[format('https://{0}.blob.core.windows.net', parameters('storageAccountName'))]"
+                },
+                {
+                  "name": "AZURE_STORAGE_UPLOAD_CONTAINER",
+                  "value": "[parameters('uploadContainerName')]"
+                },
+                {
+                  "name": "AZURE_STORAGE_PROCESSED_CONTAINER",
+                  "value": "[parameters('processedContainerName')]"
+                },
+                {
+                  "name": "AZURE_STORAGE_QUEUE_NAME",
+                  "value": "[parameters('queueName')]"
+                },
+                {
+                  "name": "AZURE_COSMOS_ENDPOINT",
+                  "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), '2024-05-15').documentEndpoint]"
+                },
+                {
+                  "name": "AZURE_COSMOS_DATABASE",
+                  "value": "[parameters('cosmosDatabaseName')]"
+                },
+                {
+                  "name": "AZURE_COSMOS_CONTAINER",
+                  "value": "[parameters('cosmosContainerName')]"
+                },
+                {
+                  "name": "CONTENT_UNDERSTANDING_ENDPOINT",
+                  "value": "[parameters('contentUnderstandingEndpoint')]"
+                },
+                {
+                  "name": "CONTENT_UNDERSTANDING_API_VERSION",
+                  "value": "[parameters('contentUnderstandingApiVersion')]"
+                },
+                {
+                  "name": "CONTENT_UNDERSTANDING_ANALYZER_ID",
+                  "value": "[parameters('contentUnderstandingAnalyzerId')]"
+                },
+                {
+                  "name": "UPLOAD_WRITE_QUEUE_MESSAGE",
+                  "value": "[string(parameters('uploadWriteQueueMessage'))]"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                  "value": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02').ConnectionString]"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_ROLE_NAME",
+                  "value": "frontend-api"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 3
+          }
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+        "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
       ]
     },
@@ -396,16 +428,18 @@
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "configuration": {
           "activeRevisionsMode": "Single",
-          "ingress": {
-            "external": false,
-            "targetPort": 8080
-          }
+          "registries": [
+            {
+              "server": "[parameters('containerRegistryLoginServer')]",
+              "identity": "system"
+            }
+          ]
         },
         "template": {
           "containers": [
             {
               "name": "ffmpeg-worker",
-              "image": "[parameters('containerImage')]",
+              "image": "[parameters('workerContainerImage')]",
               "resources": {
                 "cpu": "[json('1.0')]",
                 "memory": "2Gi"
@@ -453,7 +487,15 @@
                 },
                 {
                   "name": "APP_BASE_URL",
-                  "value": "[variables('webAppBaseUrl')]"
+                  "value": "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                  "value": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02').ConnectionString]"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_ROLE_NAME",
+                  "value": "worker"
                 }
               ]
             }
@@ -464,14 +506,14 @@
             "rules": [
               {
                 "name": "queue-scale",
+                "identity": "system",
                 "custom": {
                   "type": "azure-queue",
                   "metadata": {
                     "accountName": "[parameters('storageAccountName')]",
                     "queueName": "[parameters('queueName')]",
                     "queueLength": "1"
-                  },
-                  "identity": "system"
+                  }
                 }
               }
             ]
@@ -479,9 +521,38 @@
         }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), parameters('containerAppName'), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), parameters('webAppName'), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
       ]
     },
     {
@@ -520,13 +591,13 @@
       "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppName'), variables('storageBlobDataContributorRoleDefinitionId'), 'blob')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageBlobDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
-        "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
       ]
     },
     {
@@ -535,13 +606,13 @@
       "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppName'), variables('storageQueueDataContributorRoleDefinitionId'), 'queue')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageQueueDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
-        "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
       ]
     },
     {
@@ -563,13 +634,13 @@
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', parameters('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('webAppName'), variables('cosmosBuiltInDataContributorRoleDefinitionId')))]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('cosmosBuiltInDataContributorRoleDefinitionId')]",
         "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
       },
       "dependsOn": [
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
-        "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
       ]
     },
     {
@@ -630,11 +701,11 @@
     },
     "webAppUrl": {
       "type": "string",
-      "value": "[variables('webAppBaseUrl')]"
+      "value": "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
     },
     "webAppIdentityPrincipalId": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2023-12-01', 'full').identity.principalId]"
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]"
     }
   }
 }

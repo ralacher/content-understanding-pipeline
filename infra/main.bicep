@@ -3,15 +3,18 @@ param environmentName string = 'content-understanding-env'
 param storageAccountName string
 param cosmosAccountName string
 param webAppName string
-param appServicePlanName string = 'content-understanding-plan'
 param containerAppName string = 'ffmpeg-worker'
 param logAnalyticsName string = 'content-understanding-logs'
+param applicationInsightsName string = 'content-understanding-ai'
 param uploadContainerName string = 'incoming-avi'
 param processedContainerName string = 'processed-mp4'
 param queueName string = 'video-processing'
 param cosmosDatabaseName string = 'content-understanding'
 param cosmosContainerName string = 'media-records'
-param containerImage string
+param webContainerImage string
+param workerContainerImage string
+param containerRegistryName string
+param containerRegistryLoginServer string
 param appTitle string = 'Content Understanding Hub'
 param authClientId string = ''
 @secure()
@@ -32,8 +35,12 @@ var storageQueueDataContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 )
+var acrPullRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+)
 var cosmosBuiltInDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-var webAppBaseUrl = 'https://${webAppName}.azurewebsites.net'
+var webAppBaseUrl = 'https://${webAppName}.${managedEnvironment.properties.defaultDomain}'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -43,6 +50,16 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
       name: 'PerGB2018'
     }
     retentionInDays: 30
+  }
+}
+
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: applicationInsightsName
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
   }
 }
 
@@ -155,58 +172,71 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: appServicePlanName
-  location: location
-  kind: 'linux'
-  sku: {
-    name: 'B1'
-    tier: 'Basic'
-  }
-  properties: {
-    reserved: true
-  }
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: containerRegistryName
 }
 
-resource webApp 'Microsoft.Web/sites@2023-12-01' = {
+resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: webAppName
   location: location
-  kind: 'app,linux'
   identity: {
     type: 'SystemAssigned'
   }
   properties: {
-    serverFarmId: appServicePlan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'NODE|20-lts'
-      appCommandLine: 'node server.js'
-      alwaysOn: true
-      minTlsVersion: '1.2'
-      appSettings: [
-        { name: 'APP_BASE_URL', value: webAppBaseUrl }
-        { name: 'NEXT_PUBLIC_APP_BASE_URL', value: webAppBaseUrl }
-        { name: 'NEXT_PUBLIC_APP_TITLE', value: appTitle }
-        { name: 'NODE_ENV', value: 'production' }
-        { name: 'PORT', value: '8080' }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
-        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
-        { name: 'ENTRA_ID_CLIENT_ID', value: authClientId }
-        { name: 'ENTRA_ID_CLIENT_SECRET', value: authClientSecret }
-        { name: 'ENTRA_ID_TENANT_ID', value: authTenantId }
-        { name: 'AUTH_SESSION_SECRET', value: authSessionSecret }
-        { name: 'AZURE_STORAGE_ACCOUNT_URL', value: 'https://${storage.name}.blob.core.windows.net' }
-        { name: 'AZURE_STORAGE_UPLOAD_CONTAINER', value: uploadContainerName }
-        { name: 'AZURE_STORAGE_PROCESSED_CONTAINER', value: processedContainerName }
-        { name: 'AZURE_STORAGE_QUEUE_NAME', value: queueName }
-        { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
-        { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
-        { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
-        { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
-        { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
-        { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
-        { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
+    managedEnvironmentId: managedEnvironment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        allowInsecure: false
+        targetPort: 8080
+      }
+      registries: [
+        {
+          server: containerRegistryLoginServer
+          identity: 'system'
+        }
       ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'frontend-api'
+          image: webContainerImage
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: [
+            { name: 'APP_BASE_URL', value: webAppBaseUrl }
+            { name: 'NEXT_PUBLIC_APP_BASE_URL', value: webAppBaseUrl }
+            { name: 'NEXT_PUBLIC_APP_TITLE', value: appTitle }
+            { name: 'NODE_ENV', value: 'production' }
+            { name: 'PORT', value: '8080' }
+            { name: 'ENTRA_ID_CLIENT_ID', value: authClientId }
+            { name: 'ENTRA_ID_CLIENT_SECRET', value: authClientSecret }
+            { name: 'ENTRA_ID_TENANT_ID', value: authTenantId }
+            { name: 'AUTH_SESSION_SECRET', value: authSessionSecret }
+            { name: 'AZURE_STORAGE_ACCOUNT_URL', value: 'https://${storage.name}.blob.core.windows.net' }
+            { name: 'AZURE_STORAGE_UPLOAD_CONTAINER', value: uploadContainerName }
+            { name: 'AZURE_STORAGE_PROCESSED_CONTAINER', value: processedContainerName }
+            { name: 'AZURE_STORAGE_QUEUE_NAME', value: queueName }
+            { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
+            { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
+            { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
+            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstandingEndpoint }
+            { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
+            { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+            { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
+            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
+            { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'frontend-api' }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+      }
     }
   }
 }
@@ -221,16 +251,18 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: managedEnvironment.id
     configuration: {
       activeRevisionsMode: 'Single'
-      ingress: {
-        external: false
-        targetPort: 8080
-      }
+      registries: [
+        {
+          server: containerRegistryLoginServer
+          identity: 'system'
+        }
+      ]
     }
     template: {
       containers: [
         {
           name: 'ffmpeg-worker'
-          image: containerImage
+          image: workerContainerImage
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
@@ -247,6 +279,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
             { name: 'APP_BASE_URL', value: webAppBaseUrl }
+            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
+            { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'worker' }
           ]
         }
       ]
@@ -256,6 +290,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         rules: [
           {
             name: 'queue-scale'
+            identity: 'system'
             custom: {
               type: 'azure-queue'
               metadata: {
@@ -263,12 +298,31 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 queueName: queueName
                 queueLength: '1'
               }
-              identity: 'system'
             }
           }
         ]
       }
     }
+  }
+}
+
+resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, containerApp.name, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: containerApp.identity.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, webApp.name, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: webApp.identity.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
   }
 }
 

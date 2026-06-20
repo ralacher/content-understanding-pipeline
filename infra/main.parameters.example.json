@@ -11,8 +11,17 @@
     "webAppName": {
       "value": "your-content-understanding-webapp"
     },
-    "containerImage": {
+    "webContainerImage": {
+      "value": "myregistry.azurecr.io/content-understanding-web:latest"
+    },
+    "workerContainerImage": {
       "value": "myregistry.azurecr.io/content-understanding-worker:latest"
+    },
+    "containerRegistryName": {
+      "value": "yourregistry"
+    },
+    "containerRegistryLoginServer": {
+      "value": "yourregistry.azurecr.io"
     },
     "contentUnderstandingEndpoint": {
       "value": "https://your-foundry-resource.cognitiveservices.azure.com"

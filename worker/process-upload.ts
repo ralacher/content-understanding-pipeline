@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
 import { DefaultAzureCredential } from "@azure/identity";
@@ -160,7 +161,8 @@ async function processMessage(payload: QueuePayload): Promise<void> {
     summary: "FFmpeg conversion is in progress.",
   });
 
-  const workDir = "/tmp/content-understanding-pipeline/worker";
+  const workDir =
+    process.env.WORKER_TMP_DIR || join(tmpdir(), "content-understanding-pipeline", "worker");
   await mkdir(workDir, { recursive: true });
   const inputPath = join(workDir, basename(blobName));
   const outputPath = inputPath.replace(/\.avi$/i, ".mp4");

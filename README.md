@@ -40,13 +40,19 @@ The app runs in **demo mode** when Azure environment variables are missing. Demo
 - `CONTENT_UNDERSTANDING_ENDPOINT`
 - `CONTENT_UNDERSTANDING_API_VERSION`
 - `CONTENT_UNDERSTANDING_ANALYZER_ID`
+- `CONTENT_UNDERSTANDING_MAX_POLLS` (optional)
+- `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` (optional)
 - `UPLOAD_WRITE_QUEUE_MESSAGE` (optional, default `false`)
+- `PLAYBACK_SAS_START_OFFSET_MINUTES` (optional)
+- `PLAYBACK_SAS_TTL_MINUTES` (optional)
 
 ### Worker
 
 Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 
 - `WORKER_POLL_INTERVAL_MS`
+- `WORKER_QUEUE_VISIBILITY_TIMEOUT`
+- `WORKER_TMP_DIR`
 
 ## Commands
 

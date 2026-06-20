@@ -39,25 +39,35 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-resource uploadContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storage
-  name: 'default/${uploadContainerName}'
+  name: 'default'
+}
+
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource uploadContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: uploadContainerName
   properties: {
     publicAccess: 'None'
   }
 }
 
 resource processedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: storage
-  name: 'default/${processedContainerName}'
+  parent: blobService
+  name: processedContainerName
   properties: {
     publicAccess: 'None'
   }
 }
 
 resource processingQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
-  parent: storage
-  name: 'default/${queueName}'
+  parent: queueService
+  name: queueName
 }
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {

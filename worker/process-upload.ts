@@ -57,6 +57,16 @@ function getBearerToken(token: string): string {
   return ["Bearer", token].join(" ");
 }
 
+function getEnvNumber(name: string, fallback: number): number {
+  const rawValue = process.env[name];
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsedValue = Number(rawValue);
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
+}
+
 async function updateRecord(record: MediaRecord, patch: Partial<MediaRecord>): Promise<MediaRecord> {
   const next: MediaRecord = {
     ...record,
@@ -84,6 +94,8 @@ async function analyzeProcessedVideo(record: MediaRecord): Promise<unknown> {
 
   const credential = new DefaultAzureCredential();
   const token = await credential.getToken(config.contentUnderstanding.scope);
+  const maxPollAttempts = getEnvNumber("CONTENT_UNDERSTANDING_MAX_POLLS", 40);
+  const pollIntervalMs = getEnvNumber("CONTENT_UNDERSTANDING_POLL_INTERVAL_MS", 5000);
 
   if (!token?.token) {
     throw new Error("Unable to acquire an access token for Content Understanding.");
@@ -114,8 +126,8 @@ async function analyzeProcessedVideo(record: MediaRecord): Promise<unknown> {
     return analyzeResponse.json();
   }
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+  for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     const pollResponse = await fetch(operationLocation, {
       headers: {
         Authorization: getBearerToken(token.token),
@@ -202,10 +214,15 @@ async function runWorker(once: boolean) {
   const config = getRuntimeConfig();
   const queueServiceUrl = config.storage.accountUrl!.replace(".blob.", ".queue.");
   const queue = new QueueClient(`${queueServiceUrl}/${config.storage.queueName}`, new DefaultAzureCredential());
+  const visibilityTimeout = getEnvNumber("WORKER_QUEUE_VISIBILITY_TIMEOUT", 300);
+  const idlePollIntervalMs = getEnvNumber("WORKER_POLL_INTERVAL_MS", 10000);
   await queue.createIfNotExists();
 
   do {
-    const receive = await queue.receiveMessages({ numberOfMessages: 1, visibilityTimeout: 300 });
+    const receive = await queue.receiveMessages({
+      numberOfMessages: 1,
+      visibilityTimeout,
+    });
     const message = receive.receivedMessageItems[0];
 
     if (!message?.messageText) {
@@ -213,7 +230,7 @@ async function runWorker(once: boolean) {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, Number(process.env.WORKER_POLL_INTERVAL_MS || 10000)));
+      await new Promise((resolve) => setTimeout(resolve, idlePollIntervalMs));
       continue;
     }
 

@@ -23,6 +23,16 @@ function getCredential(): DefaultAzureCredential {
   return new DefaultAzureCredential();
 }
 
+function getEnvNumber(name: string, fallback: number): number {
+  const rawValue = process.env[name];
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsedValue = Number(rawValue);
+  return Number.isFinite(parsedValue) ? parsedValue : fallback;
+}
+
 function getBlobServiceClient(): BlobServiceClient {
   const config = getRuntimeConfig();
   return new BlobServiceClient(config.storage.accountUrl!, getCredential());
@@ -284,8 +294,10 @@ export async function buildPlaybackUrl(record: MediaRecord): Promise<string | nu
   }
 
   const config = getRuntimeConfig();
-  const startsOn = new Date(Date.now() - 5 * 60 * 1000);
-  const expiresOn = new Date(Date.now() + 60 * 60 * 1000);
+  const startOffsetMinutes = getEnvNumber("PLAYBACK_SAS_START_OFFSET_MINUTES", 5);
+  const ttlMinutes = getEnvNumber("PLAYBACK_SAS_TTL_MINUTES", 60);
+  const startsOn = new Date(Date.now() - startOffsetMinutes * 60 * 1000);
+  const expiresOn = new Date(Date.now() + ttlMinutes * 60 * 1000);
   const serviceClient = getBlobServiceClient();
   const userDelegationKey = await serviceClient.getUserDelegationKey(startsOn, expiresOn);
   const accountName = new URL(config.storage.accountUrl!).hostname.split(".")[0];

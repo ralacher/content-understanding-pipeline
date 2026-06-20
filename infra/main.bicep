@@ -194,7 +194,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource systemTopic 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = {
+resource systemTopic 'Microsoft.EventGrid/systemTopics@2022-06-15' = {
   name: '${storage.name}-blob-events'
   location: location
   properties: {
@@ -203,7 +203,7 @@ resource systemTopic 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = {
   }
 }
 
-resource blobCreatedSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
+resource blobCreatedSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15' = {
   parent: systemTopic
   name: 'blob-created-to-queue'
   properties: {

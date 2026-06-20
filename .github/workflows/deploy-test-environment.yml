@@ -1,0 +1,172 @@
+name: Deploy test environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group_name:
+        description: Azure resource group to create or update
+        required: true
+        default: content-understanding-test
+        type: string
+      location:
+        description: Azure region for the test environment
+        required: true
+        default: eastus
+        type: string
+      content_understanding_api_version:
+        description: Content Understanding API version
+        required: true
+        default: "2026-05-01"
+        type: string
+      content_understanding_analyzer_id:
+        description: Content Understanding analyzer id
+        required: true
+        default: prebuilt-video
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      web_app_url: ${{ steps.deploy_infra.outputs.web_app_url }}
+      web_app_name: ${{ steps.compute_names.outputs.web_app_name }}
+      container_app_name: ${{ steps.compute_names.outputs.container_app_name }}
+      registry_name: ${{ steps.compute_names.outputs.registry_name }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate application
+        run: |
+          npm run lint
+          npm run build
+          npm run build:worker
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Compute deployment names
+        id: compute_names
+        run: |
+          suffix="$(printf '%x' "$GITHUB_RUN_ID")${GITHUB_RUN_ATTEMPT}"
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
+          echo "storage_account_name=cu${suffix}sa" >> "$GITHUB_OUTPUT"
+          echo "cosmos_account_name=cu${suffix}cosmos" >> "$GITHUB_OUTPUT"
+          echo "content_understanding_account_name=cu${suffix}ai" >> "$GITHUB_OUTPUT"
+          echo "web_app_name=cu-${suffix}-web" >> "$GITHUB_OUTPUT"
+          echo "container_app_name=cu-${suffix}-worker" >> "$GITHUB_OUTPUT"
+          echo "environment_name=cu-${suffix}-env" >> "$GITHUB_OUTPUT"
+          echo "log_analytics_name=cu-${suffix}-logs" >> "$GITHUB_OUTPUT"
+          echo "application_insights_name=cu-${suffix}-ai" >> "$GITHUB_OUTPUT"
+          echo "registry_name=cu${suffix}acr" >> "$GITHUB_OUTPUT"
+
+      - name: Create resource group
+        run: |
+          az group create \
+            --name "${{ inputs.resource_group_name }}" \
+            --location "${{ inputs.location }}"
+
+      - name: Create container registry
+        run: |
+          az acr create \
+            --name "${{ steps.compute_names.outputs.registry_name }}" \
+            --resource-group "${{ inputs.resource_group_name }}" \
+            --location "${{ inputs.location }}" \
+            --sku Basic \
+            --admin-enabled false
+
+      - name: Build and push frontend image
+        id: build_and_push_web_image
+        env:
+          REGISTRY_NAME: ${{ steps.compute_names.outputs.registry_name }}
+          IMAGE_NAME: content-understanding-web
+        run: |
+          az acr login --name "$REGISTRY_NAME"
+          login_server="$(az acr show --name "$REGISTRY_NAME" --resource-group "${{ inputs.resource_group_name }}" --query loginServer -o tsv)"
+          image_ref="$login_server/$IMAGE_NAME:${GITHUB_SHA}"
+          docker build -f Dockerfile.web -t "$image_ref" .
+          docker push "$image_ref"
+          echo "login_server=$login_server" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push worker image
+        id: build_and_push_worker_image
+        env:
+          REGISTRY_NAME: ${{ steps.compute_names.outputs.registry_name }}
+          IMAGE_NAME: content-understanding-worker
+        run: |
+          az acr login --name "$REGISTRY_NAME"
+          login_server="$(az acr show --name "$REGISTRY_NAME" --resource-group "${{ inputs.resource_group_name }}" --query loginServer -o tsv)"
+          image_ref="$login_server/$IMAGE_NAME:${GITHUB_SHA}"
+          docker build -f Dockerfile.worker -t "$image_ref" .
+          docker push "$image_ref"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Azure infrastructure
+        id: deploy_infra
+        run: |
+          deployment_output="$(az deployment group create \
+            --name "content-understanding-${GITHUB_RUN_ID}" \
+            --resource-group "${{ inputs.resource_group_name }}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              storageAccountName="${{ steps.compute_names.outputs.storage_account_name }}" \
+              cosmosAccountName="${{ steps.compute_names.outputs.cosmos_account_name }}" \
+              contentUnderstandingAccountName="${{ steps.compute_names.outputs.content_understanding_account_name }}" \
+              webAppName="${{ steps.compute_names.outputs.web_app_name }}" \
+              containerAppName="${{ steps.compute_names.outputs.container_app_name }}" \
+              environmentName="${{ steps.compute_names.outputs.environment_name }}" \
+              logAnalyticsName="${{ steps.compute_names.outputs.log_analytics_name }}" \
+              applicationInsightsName="${{ steps.compute_names.outputs.application_insights_name }}" \
+              webContainerImage="${{ steps.build_and_push_web_image.outputs.image_ref }}" \
+              workerContainerImage="${{ steps.build_and_push_worker_image.outputs.image_ref }}" \
+              containerRegistryName="${{ steps.compute_names.outputs.registry_name }}" \
+              containerRegistryLoginServer="${{ steps.build_and_push_web_image.outputs.login_server }}" \
+              contentUnderstandingApiVersion="${{ inputs.content_understanding_api_version }}" \
+              contentUnderstandingAnalyzerId="${{ inputs.content_understanding_analyzer_id }}" \
+              authClientId="${{ secrets.APP_ENTRA_ID_CLIENT_ID }}" \
+              authClientSecret="${{ secrets.APP_ENTRA_ID_CLIENT_SECRET }}" \
+              authTenantId="${{ secrets.APP_ENTRA_ID_TENANT_ID }}" \
+              authSessionSecret="${{ secrets.APP_AUTH_SESSION_SECRET }}" \
+            -o json)"
+
+          web_app_url="$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.webAppUrl.value')"
+          echo "web_app_url=$web_app_url" >> "$GITHUB_OUTPUT"
+          echo "storage_account_url=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.storageAccountUrl.value')" >> "$GITHUB_OUTPUT"
+          echo "cosmos_endpoint=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.cosmosEndpoint.value')" >> "$GITHUB_OUTPUT"
+          echo "content_understanding_endpoint=$(printf '%s' "$deployment_output" | jq -r '.properties.outputs.contentUnderstandingEndpoint.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize deployment
+        run: |
+          {
+            echo "## Test environment deployed"
+            echo ""
+            echo "- Web app URL: ${{ steps.deploy_infra.outputs.web_app_url }}"
+            echo "- Resource group: ${{ inputs.resource_group_name }}"
+            echo "- Frontend/API container app: ${{ steps.compute_names.outputs.web_app_name }}"
+            echo "- Worker container app: ${{ steps.compute_names.outputs.container_app_name }}"
+            echo "- Content Understanding resource: ${{ steps.compute_names.outputs.content_understanding_account_name }}"
+            echo "- Content Understanding endpoint: ${{ steps.deploy_infra.outputs.content_understanding_endpoint }}"
+            echo "- Container registry: ${{ steps.compute_names.outputs.registry_name }}"
+            echo ""
+            echo "The worker managed identity is granted Cognitive Services User on the provisioned Content Understanding resource."
+            echo "If the Entra auth secrets are not configured, the site runs in demo sign-in mode."
+          } >> "$GITHUB_STEP_SUMMARY"

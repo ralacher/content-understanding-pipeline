@@ -1,4 +1,4 @@
-import appInsights from "applicationinsights";
+import * as appInsights from "applicationinsights";
 
 declare global {
   var __contentUnderstandingTelemetryInitialized: boolean | undefined;
@@ -14,7 +14,14 @@ export function initializeTelemetry(defaultRoleName: string): void {
     return;
   }
 
-  appInsights
+  const sdk = (appInsights as unknown as { default?: typeof appInsights }).default ?? appInsights;
+
+  if (typeof (sdk as { setup?: unknown }).setup !== "function") {
+    console.warn("Application Insights SDK is installed but does not expose setup(); telemetry disabled.");
+    return;
+  }
+
+  sdk
     .setup(connectionString)
     .setAutoDependencyCorrelation(true)
     .setAutoCollectRequests(true)
@@ -26,8 +33,8 @@ export function initializeTelemetry(defaultRoleName: string): void {
     .setInternalLogging(false, false)
     .start();
 
-  if (appInsights.defaultClient) {
-    appInsights.defaultClient.context.tags[appInsights.defaultClient.context.keys.cloudRole] =
+  if (sdk.defaultClient) {
+    sdk.defaultClient.context.tags[sdk.defaultClient.context.keys.cloudRole] =
       process.env.APPLICATIONINSIGHTS_ROLE_NAME || defaultRoleName;
   }
 

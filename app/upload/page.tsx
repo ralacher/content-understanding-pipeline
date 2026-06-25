@@ -10,23 +10,12 @@ export default async function UploadPage() {
 
   return (
     <div className="stack-xl">
-      <section className="hero-card compact">
-        <div>
-          <p className="eyebrow">Upload screen</p>
-          <h1>Upload AVI files for review, conversion, and analysis.</h1>
-          <p className="hero-copy">
-            Manual uploads are intended for validation and spot checks while the backend automation
-            handles conversion, content understanding, and persistence.
-          </p>
-        </div>
-      </section>
-
       <section className="grid upload-grid">
         <article className="card">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Upload</p>
-              <h2>Submit a source AVI</h2>
+              <h2>Submit a source video</h2>
             </div>
           </div>
           <UploadForm />
@@ -59,8 +48,8 @@ export default async function UploadPage() {
             <div className="callout">
               <strong>Worker behavior</strong>
               <p>
-                The FFmpeg worker listens for new upload events, converts AVI to MP4, then persists
-                readable analysis output.
+                The FFmpeg worker listens for new upload events, detects the input format, converts
+                it to MP4, then persists readable analysis output.
               </p>
             </div>
           </div>

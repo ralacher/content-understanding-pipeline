@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.43.8.12551",
-      "templateHash": "3161912394652339623"
+      "version": "0.44.1.10279",
+      "templateHash": "9579907142058157313"
     }
   },
   "parameters": {
@@ -206,14 +206,14 @@
       "type": "Microsoft.DocumentDB/databaseAccounts",
       "apiVersion": "2024-05-15",
       "name": "[parameters('cosmosAccountName')]",
-      "location": "[parameters('location')]",
+      "location": "eastus2",
       "kind": "GlobalDocumentDB",
       "properties": {
         "databaseAccountOfferType": "Standard",
         "publicNetworkAccess": "Enabled",
         "locations": [
           {
-            "locationName": "[parameters('location')]",
+            "locationName": "eastus2",
             "failoverPriority": 0
           }
         ],

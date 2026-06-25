@@ -12,6 +12,8 @@ param queueName string = 'video-processing'
 param cosmosDatabaseName string = 'content-understanding'
 param cosmosContainerName string = 'media-records'
 param contentUnderstandingAccountName string
+param aiSearchServiceName string = 'content-understanding-search'
+param aiSearchSku string = 'basic'
 param webContainerImage string
 param workerContainerImage string
 param containerRegistryName string
@@ -44,6 +46,14 @@ var acrPullRoleDefinitionId = subscriptionResourceId(
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 )
 var cosmosBuiltInDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+var searchServiceContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
+)
+var searchIndexDataContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+)
 var storageAccountUrl = 'https://${storage.name}.blob.${environment().suffixes.storage}'
 var webAppBaseUrl = 'https://${webAppName}.${managedEnvironment.properties.defaultDomain}'
 
@@ -115,14 +125,14 @@ resource processingQueue 'Microsoft.Storage/storageAccounts/queueServices/queues
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   name: cosmosAccountName
-  location: location
+  location: 'eastus2'
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
     publicNetworkAccess: 'Enabled'
     locations: [
       {
-        locationName: location
+        locationName: 'eastus2'
         failoverPriority: 0
       }
     ]
@@ -177,6 +187,18 @@ resource contentUnderstanding 'Microsoft.CognitiveServices/accounts@2024-10-01' 
   }
 }
 
+resource aiSearch 'Microsoft.Search/searchServices@2024-03-01-preview' = {
+  name: aiSearchServiceName
+  location: location
+  sku: {
+    name: aiSearchSku
+  }
+  properties: {
+    disableLocalAuth: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -195,7 +217,7 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' e
   name: containerRegistryName
 }
 
-resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource webApp 'Microsoft.App/containerApps@2026-01-01' = {
   name: webAppName
   location: location
   identity: {
@@ -246,6 +268,11 @@ resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
             { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+            { name: 'AZURE_AI_SEARCH_ENDPOINT', value: 'https://${aiSearch.name}.search.windows.net' }
+            { name: 'AZURE_AI_SEARCH_INDEX_NAME', value: 'content-understanding-assets' }
+            { name: 'AZURE_AI_SEARCH_API_VERSION', value: '2024-07-01' }
+            { name: 'AZURE_FOUNDRY_ENDPOINT', value: contentUnderstanding.properties.endpoint }
+            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: 'text-embedding-3-small' }
             { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
             { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'frontend-api' }
@@ -260,7 +287,7 @@ resource webApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
   name: containerAppName
   location: location
   identity: {
@@ -297,6 +324,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
             { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
             { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+            { name: 'AZURE_AI_SEARCH_ENDPOINT', value: 'https://${aiSearch.name}.search.windows.net' }
+            { name: 'AZURE_AI_SEARCH_INDEX_NAME', value: 'content-understanding-assets' }
+            { name: 'AZURE_AI_SEARCH_API_VERSION', value: '2024-07-01' }
+            { name: 'AZURE_FOUNDRY_ENDPOINT', value: contentUnderstanding.properties.endpoint }
+            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: 'text-embedding-3-small' }
             { name: 'APP_BASE_URL', value: webAppBaseUrl }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
             { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'worker' }
@@ -310,9 +342,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           {
             name: 'queue-scale'
             #disable-next-line BCP037 // Azure queue scale rules support managed identity; the current Bicep type definition is stale.
-            identity: 'system'
             custom: {
               type: 'azure-queue'
+              identity: 'system'
               metadata: {
                 accountName: storage.name
                 queueName: queueName
@@ -324,6 +356,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       }
     }
   }
+  dependsOn: [
+    
+  ]
 }
 
 resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -412,6 +447,56 @@ resource workerContentUnderstandingUser 'Microsoft.Authorization/roleAssignments
   properties: {
     principalId: containerApp.identity.principalId
     roleDefinitionId: cognitiveServicesUserRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webContentUnderstandingUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(contentUnderstanding.id, webApp.name, cognitiveServicesUserRoleDefinitionId)
+  scope: contentUnderstanding
+  properties: {
+    principalId: webApp.identity.principalId
+    roleDefinitionId: cognitiveServicesUserRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerSearchServiceContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiSearch.id, containerApp.name, searchServiceContributorRoleDefinitionId)
+  scope: aiSearch
+  properties: {
+    principalId: containerApp.identity.principalId
+    roleDefinitionId: searchServiceContributorRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerSearchIndexDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiSearch.id, containerApp.name, searchIndexDataContributorRoleDefinitionId)
+  scope: aiSearch
+  properties: {
+    principalId: containerApp.identity.principalId
+    roleDefinitionId: searchIndexDataContributorRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webSearchServiceContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiSearch.id, webApp.name, searchServiceContributorRoleDefinitionId)
+  scope: aiSearch
+  properties: {
+    principalId: webApp.identity.principalId
+    roleDefinitionId: searchServiceContributorRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webSearchIndexDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiSearch.id, webApp.name, searchIndexDataContributorRoleDefinitionId)
+  scope: aiSearch
+  properties: {
+    principalId: webApp.identity.principalId
+    roleDefinitionId: searchIndexDataContributorRoleDefinitionId
     principalType: 'ServicePrincipal'
   }
 }

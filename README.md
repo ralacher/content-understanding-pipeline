@@ -7,9 +7,10 @@ A modern Next.js interface and Azure processing pipeline for Microsoft Foundry C
 - **Overview dashboard** with KPIs, recent uploads, status breakdown, and failure summaries.
 - **Upload screen** for manual AVI ingestion and status validation.
 - **Detailed view** with readable analysis sections, lifecycle timeline, and secure MP4 playback when Azure resources are configured.
+- **Search page** for keyword + vector search across indexed analysis results.
 - **Azure-backed API layer** for dashboard data, uploads, and detail lookup.
-- **FFmpeg worker** for Azure Container Apps that converts AVI files to MP4, invokes Content Understanding, and persists normalized results to Cosmos DB.
-- **Infrastructure starter** in Bicep for Blob Storage, Queue Storage, Cosmos DB, Azure AI Content Understanding, Event Grid, and Container Apps.
+- **FFmpeg worker** for Azure Container Apps that converts AVI files to MP4, invokes Content Understanding, and persists normalized results to Cosmos DB and Azure AI Search.
+- **Infrastructure starter** in Bicep for Blob Storage, Queue Storage, Cosmos DB, Azure AI Content Understanding, Azure AI Search, Event Grid, and Container Apps.
 
 ## Local development
 
@@ -40,6 +41,11 @@ The app runs in **demo mode** when Azure environment variables are missing. Demo
 - `CONTENT_UNDERSTANDING_ENDPOINT`
 - `CONTENT_UNDERSTANDING_API_VERSION`
 - `CONTENT_UNDERSTANDING_ANALYZER_ID`
+- `AZURE_AI_SEARCH_ENDPOINT`
+- `AZURE_AI_SEARCH_INDEX_NAME`
+- `AZURE_AI_SEARCH_API_VERSION`
+- `AZURE_FOUNDRY_ENDPOINT`
+- `AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT`
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` (optional)
 - `APPLICATIONINSIGHTS_ROLE_NAME` (optional)
 - `CONTENT_UNDERSTANDING_MAX_POLLS` (optional)
@@ -71,11 +77,11 @@ Use the same storage, Cosmos DB, and Content Understanding settings, plus:
 
 1. Deploy the Bicep template in `/infra/main.bicep`.
 2. The template now provisions:
-   - Blob Storage, Queue Storage, Cosmos DB, a dedicated Azure AI Content Understanding account, Event Grid, a public frontend/API Container App, and the worker Container App
+   - Blob Storage, Queue Storage, Cosmos DB, Azure AI Search, a dedicated Azure AI Content Understanding account, Event Grid, a public frontend/API Container App, and the worker Container App
    - Log Analytics and Application Insights for both runtime containers
-   - managed identity role assignments for Storage, Cosmos DB, Azure Container Registry pulls, and Content Understanding access for the worker container app
+   - managed identity role assignments for Storage, Cosmos DB, Azure Container Registry pulls, Azure AI Search, and Content Understanding access for both container apps
 3. If you want Microsoft Entra sign-in in the deployed test app, register an Entra application for `https://<your-host>/api/auth/callback` and provide the corresponding secrets during deployment. If you skip those settings, the deployed app runs in demo sign-in mode.
-4. Build and publish both the frontend/API and worker container images, then set the environment variables for both containers.
+4. Build and publish both the frontend/API and worker container images, then set the environment variables for both containers. Search and embedding calls use managed identity in Azure, so no AI Search API key is required.
 
 ## GitHub Actions test deployment
 
@@ -110,5 +116,5 @@ The deployment workflow:
 - Incoming AVI files are written to the **incoming blob container**.
 - A **BlobCreated** event is forwarded to **Azure Queue Storage** via Event Grid.
 - The **Azure Container App** scales on queue depth, converts AVI to MP4 with FFmpeg, then submits the MP4 to **Microsoft Foundry Content Understanding**.
-- The worker stores the MP4 in a separate container and writes normalized analysis documents to **Cosmos DB**.
-- The frontend reads Cosmos DB to power the dashboard and detail view.
+- The worker stores the MP4 in a separate container and writes normalized analysis documents to **Cosmos DB** and **Azure AI Search**.
+- The frontend reads Cosmos DB to power the dashboard, detail view, and search page.

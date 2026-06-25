@@ -27,6 +27,18 @@ export interface RuntimeConfig {
     analyzerId?: string;
     scope: string;
   };
+  aiSearch: {
+    endpoint?: string;
+    indexName: string;
+    apiVersion: string;
+  };
+  embeddings: {
+    endpoint?: string;
+    deployment: string;
+    apiVersion: string;
+    dimensions: number;
+    scope: string;
+  };
 }
 
 let cachedConfig: RuntimeConfig | undefined;
@@ -62,8 +74,20 @@ export function getRuntimeConfig(): RuntimeConfig {
     contentUnderstanding: {
       endpoint: process.env.CONTENT_UNDERSTANDING_ENDPOINT,
       apiVersion: process.env.CONTENT_UNDERSTANDING_API_VERSION || "2026-05-01",
-      analyzerId: process.env.CONTENT_UNDERSTANDING_ANALYZER_ID || "prebuilt-video",
+      analyzerId: process.env.CONTENT_UNDERSTANDING_ANALYZER_ID || "project-analyzer",
       scope: process.env.CONTENT_UNDERSTANDING_SCOPE || "https://cognitiveservices.azure.com/.default",
+    },
+    aiSearch: {
+      endpoint: process.env.AZURE_AI_SEARCH_ENDPOINT,
+      indexName: process.env.AZURE_AI_SEARCH_INDEX_NAME || "content-understanding-assets",
+      apiVersion: process.env.AZURE_AI_SEARCH_API_VERSION || "2024-07-01",
+    },
+    embeddings: {
+      endpoint: process.env.AZURE_FOUNDRY_ENDPOINT,
+      deployment: process.env.AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT || "text-embedding-3-small",
+      apiVersion: process.env.AZURE_FOUNDRY_EMBEDDING_API_VERSION || "2024-05-01-preview",
+      dimensions: Number.parseInt(process.env.AZURE_FOUNDRY_EMBEDDING_DIMENSIONS || "1536", 10),
+      scope: process.env.AZURE_FOUNDRY_EMBEDDING_SCOPE || "https://cognitiveservices.azure.com/.default",
     },
   };
 
@@ -90,4 +114,9 @@ export function isCloudConfigured(): boolean {
       config.cosmos.database &&
       config.cosmos.container,
   );
+}
+
+export function isAiSearchConfigured(): boolean {
+  const config = getRuntimeConfig();
+  return Boolean(config.aiSearch.endpoint && config.aiSearch.indexName && config.embeddings.endpoint);
 }

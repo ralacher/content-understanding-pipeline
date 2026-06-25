@@ -33,6 +33,25 @@ export function formatPercentage(value?: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+export function formatNumber(value?: number): string {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return new Intl.NumberFormat("en").format(value);
+}
+
+export function formatDecimal(value?: number, maximumFractionDigits = 3): string {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return new Intl.NumberFormat("en", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  }).format(value);
+}
+
 export function formatDuration(seconds?: number): string {
   if (!seconds) {
     return "—";
@@ -63,6 +82,7 @@ export function statusTone(status: ProcessingStatus): string {
     case "converting":
     case "converted":
     case "analyzing":
+    case "indexing":
       return "warning";
     default:
       return "neutral";

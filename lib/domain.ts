@@ -3,6 +3,7 @@ export const PROCESSING_STATUSES = [
   "converting",
   "converted",
   "analyzing",
+  "indexing",
   "completed",
   "failed",
 ] as const;
@@ -13,6 +14,31 @@ export interface AnalysisSection {
   title: string;
   summary: string;
   bullets: string[];
+}
+
+export interface UnsafeBehavior {
+  description?: string;
+  timestamp?: string;
+}
+
+export interface ObjectDataItem {
+  name: string;
+  description: string;
+}
+
+export interface AnalysisUsage {
+  videoHours?: number;
+  contextualizationTokens?: number;
+  tokens?: Record<string, number>;
+}
+
+export interface ModelTokenKpi {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  otherTokens: number;
+  totalTokens: number;
 }
 
 export interface ProcessingEvent {
@@ -37,6 +63,7 @@ export interface MediaRecord {
   summary: string;
   createdAt: string;
   updatedAt: string;
+  indexedAt?: string;
   uploadedBy: UploadedBy;
   confidence?: number;
   durationSeconds?: number;
@@ -45,21 +72,31 @@ export interface MediaRecord {
   errorMessage?: string;
   analysisSections: AnalysisSection[];
   timeline: ProcessingEvent[];
+  usage?: AnalysisUsage;
+  unsafeBehaviors?: UnsafeBehavior[];
+  numberOfPeople?: number;
+  objectData?: ObjectDataItem[];
+  trainPassings?: string[];
+  location?: string;
   rawAnalysis?: unknown;
 }
 
 export interface DashboardSnapshot {
   kpis: {
+    processedFiles: number;
     totalFiles: number;
     completedFiles: number;
     activeFiles: number;
     failedFiles: number;
-    averageConfidence: number;
+    videoHours: number;
+    contextualizationTokens: number;
+    tokenUsageByModel: ModelTokenKpi[];
   };
   statusBreakdown: Array<{
     status: ProcessingStatus;
     count: number;
   }>;
+  allItems: MediaRecord[];
   recentItems: MediaRecord[];
   failureItems: MediaRecord[];
 }
@@ -71,4 +108,10 @@ export interface ContentUnderstandingSummary {
   durationSeconds?: number;
   tags: string[];
   sections: AnalysisSection[];
+  usage?: AnalysisUsage;
+  unsafeBehaviors?: UnsafeBehavior[];
+  numberOfPeople?: number;
+  objectData?: ObjectDataItem[];
+  trainPassings?: string[];
+  location?: string;
 }

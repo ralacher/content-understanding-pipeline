@@ -2,7 +2,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CosmosClient } from "@azure/cosmos";
-import { DefaultAzureCredential } from "@azure/identity";
 import {
   BlobSASPermissions,
   BlobServiceClient,
@@ -12,15 +11,23 @@ import {
 } from "@azure/storage-blob";
 import { QueueClient } from "@azure/storage-queue";
 import { getRuntimeConfig, isCloudConfigured } from "./config";
+import { getTokenCredential } from "./credential";
 import { demoRecords } from "./demo-data";
-import { DashboardSnapshot, MediaRecord } from "./domain";
+import { DashboardSnapshot, MediaRecord, ModelTokenKpi } from "./domain";
 import { slugifyFileName, sortRecords } from "./utils";
+
+type ModelTokenAggregate = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  otherTokens: number;
+};
 
 const DEMO_DB_PATH = "/tmp/content-understanding-pipeline/demo-records.json";
 const DEMO_UPLOAD_PATH = "/tmp/content-understanding-pipeline/uploads";
 
-function getCredential(): DefaultAzureCredential {
-  return new DefaultAzureCredential();
+function getCredential() {
+  return getTokenCredential();
 }
 
 function getEnvNumber(name: string, fallback: number): number {
@@ -85,12 +92,17 @@ export function buildSourceBlobName(fileName: string, id: string): string {
 }
 
 export function buildProcessedBlobName(sourceBlobName: string): string {
-  return sourceBlobName.replace(/\.avi$/i, ".mp4");
+  if (/\.[^/.]+$/.test(sourceBlobName)) {
+    return sourceBlobName.replace(/\.[^/.]+$/, ".mp4");
+  }
+
+  return `${sourceBlobName}.mp4`;
 }
 
-export async function listMediaRecords(limit = 25): Promise<MediaRecord[]> {
+export async function listMediaRecords(limit?: number): Promise<MediaRecord[]> {
   if (!isCloudConfigured()) {
-    return sortRecords(await readDemoStore()).slice(0, limit);
+    const records = sortRecords(await readDemoStore());
+    return typeof limit === "number" ? records.slice(0, limit) : records;
   }
 
   const container = getCosmosContainer();
@@ -101,7 +113,8 @@ export async function listMediaRecords(limit = 25): Promise<MediaRecord[]> {
     })
     .fetchAll();
 
-  return sortRecords(resources).slice(0, limit);
+  const records = sortRecords(resources);
+  return typeof limit === "number" ? records.slice(0, limit) : records;
 }
 
 export async function getMediaRecord(id: string): Promise<MediaRecord | null> {
@@ -158,37 +171,110 @@ export async function upsertMediaRecord(record: MediaRecord): Promise<MediaRecor
 }
 
 export async function buildDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const records = await listMediaRecords(40);
+  const records = await listMediaRecords();
   const completed = records.filter((record) => record.status === "completed");
   const failed = records.filter((record) => record.status === "failed");
+  const processed = records.filter((record) => ["completed", "failed"].includes(record.status));
   const active = records.filter(
     (record) => !["completed", "failed"].includes(record.status),
   );
-  const confidenceValues = completed
-    .map((record) => record.confidence)
-    .filter((value): value is number => typeof value === "number");
-  const averageConfidence =
-    confidenceValues.length > 0
-      ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
-      : 0;
+  const videoHours = completed.reduce((sum, record) => sum + (record.usage?.videoHours || 0), 0);
+  const contextualizationTokens = completed.reduce(
+    (sum, record) => sum + (record.usage?.contextualizationTokens || 0),
+    0,
+  );
+  const tokenUsageByModel = buildTokenUsageByModel(completed);
 
   const breakdownOrder = ["uploaded", "converting", "converted", "analyzing", "completed", "failed"] as const;
 
   return {
     kpis: {
+      processedFiles: processed.length,
       totalFiles: records.length,
       completedFiles: completed.length,
       activeFiles: active.length,
       failedFiles: failed.length,
-      averageConfidence,
+      videoHours,
+      contextualizationTokens,
+      tokenUsageByModel,
     },
     statusBreakdown: breakdownOrder.map((status) => ({
       status,
       count: records.filter((record) => record.status === status).length,
     })),
+    allItems: records,
     recentItems: records.slice(0, 6),
     failureItems: failed.slice(0, 3),
   };
+}
+
+function buildTokenUsageByModel(records: MediaRecord[]): ModelTokenKpi[] {
+  const aggregate = new Map<string, ModelTokenAggregate>();
+
+  for (const record of records) {
+    if (!record.usage?.tokens) {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(record.usage.tokens)) {
+      if (typeof value !== "number" || value <= 0) {
+        continue;
+      }
+
+      const { model, kind } = parseTokenMetricKey(key);
+      const next = aggregate.get(model) || {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        otherTokens: 0,
+      };
+
+      if (kind === "input") {
+        next.inputTokens += value;
+      } else if (kind === "output") {
+        next.outputTokens += value;
+      } else if (kind === "cachedInput") {
+        next.cachedInputTokens += value;
+      } else {
+        next.otherTokens += value;
+      }
+
+      aggregate.set(model, next);
+    }
+  }
+
+  return Array.from(aggregate.entries())
+    .map(([model, metrics]) => ({
+      model,
+      ...metrics,
+      totalTokens:
+        metrics.inputTokens + metrics.outputTokens + metrics.cachedInputTokens + metrics.otherTokens,
+    }))
+    .sort((left, right) => right.totalTokens - left.totalTokens);
+}
+
+function parseTokenMetricKey(metricKey: string): {
+  model: string;
+  kind: "input" | "output" | "cachedInput" | "other";
+} {
+  const lowercase = metricKey.toLowerCase();
+  if (lowercase.endsWith("-cached-input")) {
+    return { model: metricKey.slice(0, -"-cached-input".length), kind: "cachedInput" };
+  }
+
+  if (lowercase.endsWith("-cachedinput")) {
+    return { model: metricKey.slice(0, -"-cachedinput".length), kind: "cachedInput" };
+  }
+
+  if (lowercase.endsWith("-input")) {
+    return { model: metricKey.slice(0, -"-input".length), kind: "input" };
+  }
+
+  if (lowercase.endsWith("-output")) {
+    return { model: metricKey.slice(0, -"-output".length), kind: "output" };
+  }
+
+  return { model: metricKey, kind: "other" };
 }
 
 export async function uploadSourceFile(input: {

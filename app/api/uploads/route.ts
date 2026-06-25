@@ -3,6 +3,27 @@ import { getAppSession } from "@/lib/auth";
 import { isAuthConfigured } from "@/lib/config";
 import { uploadSourceFile } from "@/lib/storage";
 
+const SUPPORTED_VIDEO_EXTENSIONS = new Set([
+  ".avi",
+  ".mp4",
+  ".mov",
+  ".mkv",
+  ".webm",
+  ".wmv",
+  ".mpeg",
+  ".mpg",
+  ".m4v",
+  ".ogv",
+  ".ogg",
+  ".3gp",
+]);
+
+function getFileExtension(fileName: string): string {
+  const lowerName = fileName.toLowerCase();
+  const dotIndex = lowerName.lastIndexOf(".");
+  return dotIndex >= 0 ? lowerName.slice(dotIndex) : "";
+}
+
 export async function POST(request: Request) {
   const session = await getAppSession();
 
@@ -14,14 +35,19 @@ export async function POST(request: Request) {
   const upload = formData.get("file");
 
   if (!(upload instanceof File)) {
-    return NextResponse.json({ error: "Select an AVI file to upload." }, { status: 400 });
+    return NextResponse.json({ error: "Select a video file to upload." }, { status: 400 });
   }
 
-  const isAvi = upload.name.toLowerCase().endsWith(".avi") || upload.type === "video/x-msvideo";
+  const extension = getFileExtension(upload.name);
+  const isVideoMimeType = upload.type.startsWith("video/");
+  const isSupported = SUPPORTED_VIDEO_EXTENSIONS.has(extension) || isVideoMimeType;
 
-  if (!isAvi) {
+  if (!isSupported) {
     return NextResponse.json(
-      { error: "Only AVI uploads are accepted for the conversion workflow." },
+      {
+        error:
+          "Unsupported file format. Upload a common video file such as AVI, MP4, MOV, MKV, WEBM, OGV, or OGG.",
+      },
       { status: 400 },
     );
   }
@@ -29,7 +55,7 @@ export async function POST(request: Request) {
   const bytes = Buffer.from(await upload.arrayBuffer());
   const record = await uploadSourceFile({
     fileName: upload.name,
-    contentType: upload.type || "video/x-msvideo",
+    contentType: upload.type || "application/octet-stream",
     bytes,
     uploadedBy: session?.user || {
       id: "anonymous-demo",

@@ -22,6 +22,22 @@ export const demoRecords: MediaRecord[] = [
     confidence: 0.94,
     durationSeconds: 548,
     language: "English",
+    unsafeBehaviors: [{ description: "A worker briefly stepped near the marked safety boundary.", timestamp: "00:00:48" }],
+    numberOfPeople: 6,
+    objectData: [
+      { name: "Pallet jack", description: "Used to move stacked materials along the aisle." },
+      { name: "Safety vest", description: "High-visibility vest worn by floor staff." },
+    ],
+    trainPassings: ["00:01:12", "00:07:44"],
+    location: "Warehouse loading dock",
+    usage: {
+      videoHours: 0.15,
+      contextualizationTokens: 4200,
+      tokens: {
+        "gpt-4.1-input": 1900,
+        "gpt-4.1-output": 420,
+      },
+    },
     tags: ["safety", "operations", "packaging"],
     analysisSections: [
       {
@@ -69,6 +85,8 @@ export const demoRecords: MediaRecord[] = [
     confidence: 0.81,
     durationSeconds: 901,
     language: "English",
+    numberOfPeople: 3,
+    location: "Call center floor",
     tags: ["coaching", "quality"],
     analysisSections: [
       {
@@ -98,6 +116,7 @@ export const demoRecords: MediaRecord[] = [
       name: "Morgan Tate",
       email: "morgan.tate@contoso.com",
     },
+    unsafeBehaviors: [{ description: "Transcoding failed after the upload was verified.", timestamp: "00:00:00" }],
     tags: ["conversion", "review-required"],
     errorMessage: "ffmpeg exited with code 1 while probing the input stream.",
     analysisSections: [
@@ -131,6 +150,7 @@ export const demoRecords: MediaRecord[] = [
       name: "Riley Chen",
       email: "riley.chen@contoso.com",
     },
+    location: "Branch training room",
     tags: ["queued"],
     analysisSections: [
       {

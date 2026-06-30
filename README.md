@@ -35,6 +35,77 @@ When cloud settings are missing, the app runs in demo mode. Demo records are sto
 - Do not commit secrets. Use GitHub Secrets, Azure Key Vault, or Container App secret references.
 - `AUTH_SESSION_SECRET` is required whenever Entra auth is configured.
 
+## Set up Entra ID authentication
+
+Use this section when you want real Microsoft Entra sign-in instead of demo mode.
+
+### 1) Create an app registration
+
+Portal path:
+
+1. Microsoft Entra ID
+2. App registrations
+3. New registration
+4. Supported account type: single tenant (recommended)
+5. Redirect URI (Web): `https://<your-web-fqdn>/api/auth/callback`
+
+CLI alternative:
+
+```powershell
+$appName = "content-understanding-pipeline"
+$app = az ad app create --display-name $appName --sign-in-audience AzureADMyOrg -o json | ConvertFrom-Json
+$appId = $app.appId
+```
+
+### 2) Add redirect URIs
+
+You must add at least the deployed URL callback:
+
+- `https://<your-web-fqdn>/api/auth/callback`
+
+Optional for local testing:
+
+- `http://localhost:3000/api/auth/callback`
+
+```powershell
+az ad app update --id $appId --web-redirect-uris "https://<your-web-fqdn>/api/auth/callback" "http://localhost:3000/api/auth/callback"
+```
+
+### 3) Create a client secret
+
+```powershell
+$secret = az ad app credential reset --id $appId --append --display-name "content-understanding-secret" --years 1 -o json | ConvertFrom-Json
+$clientSecret = $secret.password
+```
+
+Store this secret securely. Do not commit it.
+
+### 4) Collect tenant id and set app auth values
+
+```powershell
+$tenantId = az account show --query tenantId -o tsv
+$clientId = $appId
+
+# Use a strong random value for session signing.
+$authSessionSecret = [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Minimum 0 -Maximum 256 }))
+```
+
+### 5) Provide auth values during deployment
+
+For Bicep bootstrap deployments, set:
+
+- `authClientId`
+- `authClientSecret`
+- `authTenantId`
+- `authSessionSecret`
+
+For app runtime, these map to:
+
+- `ENTRA_ID_CLIENT_ID`
+- `ENTRA_ID_CLIENT_SECRET`
+- `ENTRA_ID_TENANT_ID`
+- `AUTH_SESSION_SECRET`
+
 ## Environment variables
 
 ### Frontend and API
@@ -136,6 +207,12 @@ $searchServiceName = "cu-$suffix-search"
 $webAppName = "cu-$suffix-web"
 $workerAppName = "cu-$suffix-worker"
 $environmentName = "cu-$suffix-env"
+
+# Leave empty for demo mode, or set these from the Entra setup section above.
+$authClientId = ""
+$authClientSecret = ""
+$authTenantId = ""
+$authSessionSecret = ""
 ```
 
 ### 3) Create resource group and ACR
@@ -175,10 +252,10 @@ az deployment group create `
       workerContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
       containerRegistryName=$acrName `
       containerRegistryLoginServer=$acrLoginServer `
-      authClientId='' `
-      authClientSecret='' `
-      authTenantId='' `
-      authSessionSecret=''
+      authClientId=$authClientId `
+      authClientSecret=$authClientSecret `
+      authTenantId=$authTenantId `
+      authSessionSecret=$authSessionSecret
 ```
 
 ### 5) Build images and update Container Apps via script

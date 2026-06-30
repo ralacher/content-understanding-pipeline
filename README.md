@@ -99,6 +99,137 @@ The worker uses the same storage, Cosmos, Content Understanding, Search, and emb
 - `npm run build:worker` compile the FFmpeg worker
 - `npm run worker` run the queue worker continuously
 - `npm run worker:once` process at most one queue message and exit
+- `./scripts/build-and-deploy-images-from-outputs.ps1 -ResourceGroup <rg>` build real images in ACR and update both container apps using deployment outputs
+
+## Deploy to Azure (script-driven full flow)
+
+This is the recommended end-to-end deployment path:
+
+1. create a new resource group and ACR
+2. run Bicep bootstrap with placeholder images
+3. run the post-bootstrap script to build real images in ACR and update both Container Apps
+4. verify web endpoint and container app health
+
+### 1) Sign in and choose your subscription
+
+```bash
+az login
+az account set --subscription "<subscription-id-or-name>"
+```
+
+### 2) Set deployment variables
+
+Use a unique suffix to avoid global naming collisions.
+
+```powershell
+$location = "centralus"
+$suffix = Get-Date -Format "yyMMddHHmmss"
+
+$resourceGroup = "content-understanding-$location-$suffix"
+$acrName = "cu${suffix}acr"
+$deploymentName = "content-understanding-bootstrap-$suffix"
+
+$storageAccountName = "cu${suffix}st"
+$cosmosAccountName = "cu-$suffix-cosmos"
+$contentUnderstandingAccountName = "cu-$suffix-content"
+$searchServiceName = "cu-$suffix-search"
+$webAppName = "cu-$suffix-web"
+$workerAppName = "cu-$suffix-worker"
+$environmentName = "cu-$suffix-env"
+```
+
+### 3) Create resource group and ACR
+
+```powershell
+az group create --name $resourceGroup --location $location
+
+az acr create `
+   --name $acrName `
+   --resource-group $resourceGroup `
+   --location $location `
+   --sku Basic `
+   --admin-enabled false
+
+$acrLoginServer = az acr show --name $acrName --resource-group $resourceGroup --query loginServer -o tsv
+```
+
+### 4) Bootstrap infrastructure with placeholder images
+
+This creates all cloud resources first, then image replacement is handled by the script in the next step.
+
+```powershell
+az deployment group create `
+   --name $deploymentName `
+   --resource-group $resourceGroup `
+   --template-file infra/main.bicep `
+   --parameters `
+      location=$location `
+      environmentName=$environmentName `
+      storageAccountName=$storageAccountName `
+      cosmosAccountName=$cosmosAccountName `
+      contentUnderstandingAccountName=$contentUnderstandingAccountName `
+      aiSearchServiceName=$searchServiceName `
+      webAppName=$webAppName `
+      containerAppName=$workerAppName `
+      webContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
+      workerContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
+      containerRegistryName=$acrName `
+      containerRegistryLoginServer=$acrLoginServer `
+      authClientId='' `
+      authClientSecret='' `
+      authTenantId='' `
+      authSessionSecret=''
+```
+
+### 5) Build images and update Container Apps via script
+
+```powershell
+./scripts/build-and-deploy-images-from-outputs.ps1 `
+   -ResourceGroup $resourceGroup `
+   -DeploymentName $deploymentName
+```
+
+What the script does:
+
+1. reads deployment outputs to resolve ACR login server and Container App names
+2. builds web and worker images with `az acr build`
+3. updates both Container Apps to new tags
+4. prints endpoint and deployed image references
+
+### 6) Verify deployment
+
+```powershell
+az containerapp list -g $resourceGroup --query "[].{name:name,image:properties.template.containers[0].image,latestRevision:properties.latestRevisionName}" -o table
+
+$webFqdn = az containerapp show -g $resourceGroup -n $webAppName --query properties.configuration.ingress.fqdn -o tsv
+Write-Output "https://$webFqdn"
+```
+
+Optional system logs:
+
+```powershell
+az containerapp logs show -g $resourceGroup -n $webAppName --type system --tail 50
+az containerapp logs show -g $resourceGroup -n $workerAppName --type system --tail 50
+```
+
+### 7) Recreate AI Search index (first deployment or schema reset)
+
+```powershell
+./scripts/recreate-search-index.ps1 -ResourceGroup $resourceGroup -SearchServiceName $searchServiceName
+```
+
+### 8) Validate app behavior
+
+1. open the web URL
+2. upload a test AVI file
+3. verify worker processing logs
+4. verify dashboard and search results
+
+### 9) Cleanup
+
+```powershell
+az group delete --name $resourceGroup --yes --no-wait
+```
 
 ## Deploy to Azure (manual-first)
 
@@ -189,6 +320,48 @@ Run the included script after first deployment (and anytime you need to rebuild 
 2. Upload a test AVI file.
 3. Confirm worker activity in Container App logs.
 4. Confirm processed records appear on dashboard and search page.
+
+## Post-bootstrap image deployment script
+
+If infrastructure was deployed with placeholder images, use this script to build and deploy real images without manually looking up ACR URL or container app names.
+
+```powershell
+./scripts/build-and-deploy-images-from-outputs.ps1 -ResourceGroup <resource-group>
+```
+
+Options:
+
+- `-DeploymentName <name>` use a specific succeeded deployment (otherwise latest succeeded deployment in the resource group is used)
+- `-ImageTag <tag>` set a custom tag (otherwise current UTC timestamp is used)
+- `-WebImageName <name>` and `-WorkerImageName <name>` override repository names
+- `-UseTrackedGitContext $false` disable the default tracked-files-only context mode
+- `-NoWaitContainerAppUpdate $false` make `az containerapp update` synchronous (default is non-blocking)
+
+Common usage examples:
+
+```powershell
+# Use latest succeeded deployment in the resource group
+./scripts/build-and-deploy-images-from-outputs.ps1 -ResourceGroup <resource-group>
+
+# Use a specific deployment and fixed image tag
+./scripts/build-and-deploy-images-from-outputs.ps1 `
+   -ResourceGroup <resource-group> `
+   -DeploymentName <deployment-name> `
+   -ImageTag 20260630120000
+
+# Force synchronous container app updates
+./scripts/build-and-deploy-images-from-outputs.ps1 `
+   -ResourceGroup <resource-group> `
+   -NoWaitContainerAppUpdate $false
+```
+
+By default, the script builds from a temporary Git-tracked-only context to avoid `az acr build` hanging on local tar packaging of large untracked files.
+
+The script reads deployment outputs (`containerRegistryLoginServer`, `webContainerAppName`, `workerContainerAppName`) and then:
+
+1. runs `az acr build` for web and worker images
+2. updates both Container Apps to the new image tags
+3. prints the final web endpoint
 
 ## Optional GitHub Actions deployment
 

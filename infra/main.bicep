@@ -217,11 +217,44 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' e
   name: containerRegistryName
 }
 
+resource webAcrIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${webAppName}-acr-pull'
+  location: location
+}
+
+resource workerAcrIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${containerAppName}-acr-pull'
+  location: location
+}
+
+resource webAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, webAcrIdentity.id, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: webAcrIdentity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, workerAcrIdentity.id, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: workerAcrIdentity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource webApp 'Microsoft.App/containerApps@2026-01-01' = {
   name: webAppName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned,UserAssigned'
+    userAssignedIdentities: {
+      '${webAcrIdentity.id}': {}
+    }
   }
   properties: {
     managedEnvironmentId: managedEnvironment.id
@@ -235,7 +268,7 @@ resource webApp 'Microsoft.App/containerApps@2026-01-01' = {
       registries: [
         {
           server: containerRegistryLoginServer
-          identity: 'system'
+          identity: webAcrIdentity.id
         }
       ]
     }
@@ -285,13 +318,19 @@ resource webApp 'Microsoft.App/containerApps@2026-01-01' = {
       }
     }
   }
+  dependsOn: [
+    webAcrPull
+  ]
 }
 
 resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
   name: containerAppName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned,UserAssigned'
+    userAssignedIdentities: {
+      '${workerAcrIdentity.id}': {}
+    }
   }
   properties: {
     managedEnvironmentId: managedEnvironment.id
@@ -300,7 +339,7 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
       registries: [
         {
           server: containerRegistryLoginServer
-          identity: 'system'
+          identity: workerAcrIdentity.id
         }
       ]
     }
@@ -357,28 +396,8 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
     }
   }
   dependsOn: [
-    
+    workerAcrPull
   ]
-}
-
-resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, containerApp.name, acrPullRoleDefinitionId)
-  scope: containerRegistry
-  properties: {
-    principalId: containerApp.identity.principalId
-    roleDefinitionId: acrPullRoleDefinitionId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource webAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, webApp.name, acrPullRoleDefinitionId)
-  scope: containerRegistry
-  properties: {
-    principalId: webApp.identity.principalId
-    roleDefinitionId: acrPullRoleDefinitionId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 resource workerBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -541,3 +560,6 @@ output contentUnderstandingEndpoint string = contentUnderstanding.properties.end
 output containerAppIdentityPrincipalId string = containerApp.identity.principalId
 output webAppUrl string = webAppBaseUrl
 output webAppIdentityPrincipalId string = webApp.identity.principalId
+output webContainerAppName string = webApp.name
+output workerContainerAppName string = containerApp.name
+output containerRegistryLoginServer string = containerRegistryLoginServer

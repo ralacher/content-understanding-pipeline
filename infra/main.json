@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.44.1.10279",
-      "templateHash": "9579907142058157313"
+      "version": "0.35.1.17967",
+      "templateHash": "8143687515245222627"
     }
   },
   "parameters": {
@@ -61,6 +61,14 @@
     "contentUnderstandingAccountName": {
       "type": "string"
     },
+    "aiSearchServiceName": {
+      "type": "string",
+      "defaultValue": "content-understanding-search"
+    },
+    "aiSearchSku": {
+      "type": "string",
+      "defaultValue": "basic"
+    },
     "webContainerImage": {
       "type": "string"
     },
@@ -112,6 +120,8 @@
     "storageQueueDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
     "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
     "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
+    "searchServiceContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')]",
+    "searchIndexDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')]",
     "storageAccountUrl": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
   },
   "resources": [
@@ -206,14 +216,14 @@
       "type": "Microsoft.DocumentDB/databaseAccounts",
       "apiVersion": "2024-05-15",
       "name": "[parameters('cosmosAccountName')]",
-      "location": "eastus2",
+      "location": "[parameters('location')]",
       "kind": "GlobalDocumentDB",
       "properties": {
         "databaseAccountOfferType": "Standard",
         "publicNetworkAccess": "Enabled",
         "locations": [
           {
-            "locationName": "eastus2",
+            "locationName": "[parameters('location')]",
             "failoverPriority": 0
           }
         ],
@@ -277,6 +287,19 @@
       }
     },
     {
+      "type": "Microsoft.Search/searchServices",
+      "apiVersion": "2024-03-01-preview",
+      "name": "[parameters('aiSearchServiceName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('aiSearchSku')]"
+      },
+      "properties": {
+        "disableLocalAuth": true,
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[parameters('environmentName')]",
@@ -295,12 +318,55 @@
       ]
     },
     {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-acr-pull', parameters('webAppName'))]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-acr-pull', parameters('containerAppName'))]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName'))), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName'))), '2023-01-31').principalId]",
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName'))), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName'))), '2023-01-31').principalId]",
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName')))]"
+      ]
+    },
+    {
       "type": "Microsoft.App/containerApps",
-      "apiVersion": "2024-03-01",
+      "apiVersion": "2026-01-01",
       "name": "[parameters('webAppName')]",
       "location": "[parameters('location')]",
       "identity": {
-        "type": "SystemAssigned"
+        "type": "SystemAssigned,UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName'))))]": {}
+        }
       },
       "properties": {
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
@@ -314,7 +380,7 @@
           "registries": [
             {
               "server": "[parameters('containerRegistryLoginServer')]",
-              "identity": "system"
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName')))]"
             }
           ]
         },
@@ -405,6 +471,26 @@
                   "value": "[parameters('contentUnderstandingAnalyzerId')]"
                 },
                 {
+                  "name": "AZURE_AI_SEARCH_ENDPOINT",
+                  "value": "[format('https://{0}.search.windows.net', parameters('aiSearchServiceName'))]"
+                },
+                {
+                  "name": "AZURE_AI_SEARCH_INDEX_NAME",
+                  "value": "content-understanding-assets"
+                },
+                {
+                  "name": "AZURE_AI_SEARCH_API_VERSION",
+                  "value": "2024-07-01"
+                },
+                {
+                  "name": "AZURE_FOUNDRY_ENDPOINT",
+                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
+                },
+                {
+                  "name": "AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT",
+                  "value": "text-embedding-3-small"
+                },
+                {
                   "name": "UPLOAD_WRITE_QUEUE_MESSAGE",
                   "value": "[string(parameters('uploadWriteQueueMessage'))]"
                 },
@@ -426,20 +512,26 @@
         }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
         "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName')))]",
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('webAppName'))), variables('acrPullRoleDefinitionId')))]"
       ]
     },
     {
       "type": "Microsoft.App/containerApps",
-      "apiVersion": "2024-03-01",
+      "apiVersion": "2026-01-01",
       "name": "[parameters('containerAppName')]",
       "location": "[parameters('location')]",
       "identity": {
-        "type": "SystemAssigned"
+        "type": "SystemAssigned,UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName'))))]": {}
+        }
       },
       "properties": {
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
@@ -448,7 +540,7 @@
           "registries": [
             {
               "server": "[parameters('containerRegistryLoginServer')]",
-              "identity": "system"
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName')))]"
             }
           ]
         },
@@ -503,6 +595,26 @@
                   "value": "[parameters('contentUnderstandingAnalyzerId')]"
                 },
                 {
+                  "name": "AZURE_AI_SEARCH_ENDPOINT",
+                  "value": "[format('https://{0}.search.windows.net', parameters('aiSearchServiceName'))]"
+                },
+                {
+                  "name": "AZURE_AI_SEARCH_INDEX_NAME",
+                  "value": "content-understanding-assets"
+                },
+                {
+                  "name": "AZURE_AI_SEARCH_API_VERSION",
+                  "value": "2024-07-01"
+                },
+                {
+                  "name": "AZURE_FOUNDRY_ENDPOINT",
+                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
+                },
+                {
+                  "name": "AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT",
+                  "value": "text-embedding-3-small"
+                },
+                {
                   "name": "APP_BASE_URL",
                   "value": "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
                 },
@@ -523,9 +635,9 @@
             "rules": [
               {
                 "name": "queue-scale",
-                "identity": "system",
                 "custom": {
                   "type": "azure-queue",
+                  "identity": "system",
                   "metadata": {
                     "accountName": "[parameters('storageAccountName')]",
                     "queueName": "[parameters('queueName')]",
@@ -538,48 +650,23 @@
         }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
         "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName')))]",
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull', parameters('containerAppName'))), variables('acrPullRoleDefinitionId')))]"
       ]
     },
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
-      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), parameters('containerAppName'), variables('acrPullRoleDefinitionId'))]",
-      "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
-        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
-      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), parameters('webAppName'), variables('acrPullRoleDefinitionId'))]",
-      "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
-        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('containerAppName'), variables('storageBlobDataContributorRoleDefinitionId'), 'blob')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageBlobDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
@@ -591,10 +678,10 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('containerAppName'), variables('storageQueueDataContributorRoleDefinitionId'), 'queue')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageQueueDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
@@ -606,10 +693,10 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppName'), variables('storageBlobDataContributorRoleDefinitionId'), 'blob')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageBlobDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
@@ -621,10 +708,10 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
       "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppName'), variables('storageQueueDataContributorRoleDefinitionId'), 'queue')]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('storageQueueDataContributorRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
@@ -638,7 +725,7 @@
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', parameters('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('containerAppName'), variables('cosmosBuiltInDataContributorRoleDefinitionId')))]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('cosmosBuiltInDataContributorRoleDefinitionId')]",
         "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
       },
@@ -652,7 +739,7 @@
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', parameters('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('webAppName'), variables('cosmosBuiltInDataContributorRoleDefinitionId')))]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('cosmosBuiltInDataContributorRoleDefinitionId')]",
         "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
       },
@@ -664,16 +751,91 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
+      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('contentUnderstandingAccountName'))]",
       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), parameters('containerAppName'), variables('cognitiveServicesUserRoleDefinitionId'))]",
       "properties": {
-        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
         "roleDefinitionId": "[variables('cognitiveServicesUserRoleDefinitionId')]",
         "principalType": "ServicePrincipal"
       },
       "dependsOn": [
         "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('contentUnderstandingAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), parameters('webAppName'), variables('cognitiveServicesUserRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('cognitiveServicesUserRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('aiSearchServiceName'))]",
+      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName')), parameters('containerAppName'), variables('searchServiceContributorRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('searchServiceContributorRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
+        "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('aiSearchServiceName'))]",
+      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName')), parameters('containerAppName'), variables('searchIndexDataContributorRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('searchIndexDataContributorRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
+        "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('aiSearchServiceName'))]",
+      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName')), parameters('webAppName'), variables('searchServiceContributorRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('searchServiceContributorRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('aiSearchServiceName'))]",
+      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName')), parameters('webAppName'), variables('searchIndexDataContributorRoleDefinitionId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]",
+        "roleDefinitionId": "[variables('searchIndexDataContributorRoleDefinitionId')]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Search/searchServices', parameters('aiSearchServiceName'))]",
+        "[resourceId('Microsoft.App/containerApps', parameters('webAppName'))]"
       ]
     },
     {
@@ -734,7 +896,7 @@
     },
     "containerAppIdentityPrincipalId": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01', 'full').identity.principalId]"
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2026-01-01', 'full').identity.principalId]"
     },
     "webAppUrl": {
       "type": "string",
@@ -742,7 +904,19 @@
     },
     "webAppIdentityPrincipalId": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2024-03-01', 'full').identity.principalId]"
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('webAppName')), '2026-01-01', 'full').identity.principalId]"
+    },
+    "webContainerAppName": {
+      "type": "string",
+      "value": "[parameters('webAppName')]"
+    },
+    "workerContainerAppName": {
+      "type": "string",
+      "value": "[parameters('containerAppName')]"
+    },
+    "containerRegistryLoginServer": {
+      "type": "string",
+      "value": "[parameters('containerRegistryLoginServer')]"
     }
   }
 }

@@ -18,9 +18,21 @@ export interface AppSession {
 
 function getSecret(): Uint8Array {
   const config = getRuntimeConfig();
-  return new TextEncoder().encode(
-    config.auth.sessionSecret || "content-understanding-demo-session-secret",
+  if (config.auth.sessionSecret) {
+    return new TextEncoder().encode(config.auth.sessionSecret);
+  }
+
+  const hasPartialAuthConfig = Boolean(
+    config.auth.clientId || config.auth.clientSecret || config.auth.tenantId,
   );
+
+  if (hasPartialAuthConfig) {
+    throw new Error(
+      "AUTH_SESSION_SECRET is required when Entra ID authentication is configured.",
+    );
+  }
+
+  return new TextEncoder().encode("content-understanding-demo-session-secret");
 }
 
 function msalAuthority(): string {

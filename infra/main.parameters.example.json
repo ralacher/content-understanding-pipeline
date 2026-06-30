@@ -26,11 +26,32 @@
     "containerRegistryLoginServer": {
       "value": "yourregistry.azurecr.io"
     },
+    "aiSearchSku": {
+      "value": "basic"
+    },
+    "appTitle": {
+      "value": "Content Understanding Hub"
+    },
     "contentUnderstandingApiVersion": {
       "value": "2026-05-01"
     },
     "contentUnderstandingAnalyzerId": {
       "value": "prebuilt-video"
+    },
+    "uploadWriteQueueMessage": {
+      "value": false
+    },
+    "authClientId": {
+      "value": ""
+    },
+    "authClientSecret": {
+      "value": ""
+    },
+    "authTenantId": {
+      "value": ""
+    },
+    "authSessionSecret": {
+      "value": ""
     }
   }
 }

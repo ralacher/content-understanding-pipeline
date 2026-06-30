@@ -125,14 +125,14 @@ resource processingQueue 'Microsoft.Storage/storageAccounts/queueServices/queues
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   name: cosmosAccountName
-  location: 'eastus2'
+  location: location
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
     publicNetworkAccess: 'Enabled'
     locations: [
       {
-        locationName: 'eastus2'
+        locationName: location
         failoverPriority: 0
       }
     ]

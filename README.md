@@ -1,16 +1,24 @@
 # Content Understanding Pipeline
 
-A modern Next.js interface and Azure processing pipeline for Microsoft Foundry Content Understanding.
+A Next.js web experience plus Azure worker pipeline for Microsoft Foundry Content Understanding.
 
 ## What is included
 
-- **Overview dashboard** with KPIs, recent uploads, status breakdown, and failure summaries.
-- **Upload screen** for manual AVI ingestion and status validation.
-- **Detailed view** with readable analysis sections, lifecycle timeline, and secure MP4 playback when Azure resources are configured.
-- **Search page** for keyword + vector search across indexed analysis results.
-- **Azure-backed API layer** for dashboard data, uploads, and detail lookup.
-- **FFmpeg worker** for Azure Container Apps that converts AVI files to MP4, invokes Content Understanding, and persists normalized results to Cosmos DB and Azure AI Search.
-- **Infrastructure starter** in Bicep for Blob Storage, Queue Storage, Cosmos DB, Azure AI Content Understanding, Azure AI Search, Event Grid, and Container Apps.
+- Overview dashboard with KPIs, status breakdowns, and failure summaries
+- Upload flow for AVI files
+- Detail page with normalized analysis sections and MP4 playback
+- Search page with keyword plus vector search
+- Azure-backed API for uploads, dashboard, details, and search
+- Worker for AVI to MP4 conversion, Content Understanding analysis, Cosmos persistence, and Azure AI Search indexing
+- Bicep infrastructure starter for Storage, Queue, Cosmos DB, Azure AI Search, Content Understanding, Event Grid, Container Apps, Log Analytics, and Application Insights
+
+## Prerequisites
+
+- Node.js 20+
+- npm 10+
+- Docker 24+
+- Azure CLI 2.60+
+- Azure subscription with permission to create resource groups and role assignments
 
 ## Local development
 
@@ -19,102 +27,202 @@ npm install
 npm run dev
 ```
 
-The app runs in **demo mode** when Azure environment variables are missing. Demo mode persists records to `/tmp/content-understanding-pipeline/demo-records.json` so the dashboard and detail pages stay interactive during local review.
+When cloud settings are missing, the app runs in demo mode. Demo records are stored at `/tmp/content-understanding-pipeline/demo-records.json`.
+
+## Security notes
+
+- For production Entra sign-in, set all auth values: `ENTRA_ID_CLIENT_ID`, `ENTRA_ID_CLIENT_SECRET`, `ENTRA_ID_TENANT_ID`, and `AUTH_SESSION_SECRET`.
+- Do not commit secrets. Use GitHub Secrets, Azure Key Vault, or Container App secret references.
+- `AUTH_SESSION_SECRET` is required whenever Entra auth is configured.
 
 ## Environment variables
 
-### Frontend / API
+### Frontend and API
 
-- `NEXT_PUBLIC_APP_BASE_URL` or `APP_BASE_URL`
-- `NEXT_PUBLIC_APP_TITLE`
+Required for cloud mode:
+
+- `APP_BASE_URL` or `NEXT_PUBLIC_APP_BASE_URL`
+- `NEXT_PUBLIC_APP_TITLE` (optional, defaults to `Content Understanding Hub`)
+- `AZURE_STORAGE_ACCOUNT_URL`
+- `AZURE_STORAGE_UPLOAD_CONTAINER` (optional, default `incoming-avi`)
+- `AZURE_STORAGE_PROCESSED_CONTAINER` (optional, default `processed-mp4`)
+- `AZURE_STORAGE_QUEUE_NAME` (optional, default `video-processing`)
+- `AZURE_COSMOS_ENDPOINT`
+- `AZURE_COSMOS_DATABASE` (optional, default `content-understanding`)
+- `AZURE_COSMOS_CONTAINER` (optional, default `media-records`)
+- `CONTENT_UNDERSTANDING_ENDPOINT`
+- `CONTENT_UNDERSTANDING_API_VERSION` (optional, default `2026-05-01`)
+- `CONTENT_UNDERSTANDING_ANALYZER_ID` (optional, default `project-analyzer`)
+- `CONTENT_UNDERSTANDING_SCOPE` (optional, default `https://cognitiveservices.azure.com/.default`)
+- `AZURE_AI_SEARCH_ENDPOINT`
+- `AZURE_AI_SEARCH_INDEX_NAME` (optional, default `content-understanding-assets`)
+- `AZURE_AI_SEARCH_API_VERSION` (optional, default `2024-07-01`)
+- `AZURE_FOUNDRY_ENDPOINT`
+- `AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT` (optional, default `text-embedding-3-small`)
+- `AZURE_FOUNDRY_EMBEDDING_API_VERSION` (optional, default `2024-05-01-preview`)
+- `AZURE_FOUNDRY_EMBEDDING_DIMENSIONS` (optional, default `1536`)
+- `AZURE_FOUNDRY_EMBEDDING_SCOPE` (optional, default `https://cognitiveservices.azure.com/.default`)
+
+Optional:
+
 - `ENTRA_ID_CLIENT_ID`
 - `ENTRA_ID_CLIENT_SECRET`
 - `ENTRA_ID_TENANT_ID`
 - `AUTH_SESSION_SECRET`
-- `AZURE_STORAGE_ACCOUNT_URL`
-- `AZURE_STORAGE_UPLOAD_CONTAINER`
-- `AZURE_STORAGE_PROCESSED_CONTAINER`
-- `AZURE_STORAGE_QUEUE_NAME`
-- `AZURE_COSMOS_ENDPOINT`
-- `AZURE_COSMOS_DATABASE`
-- `AZURE_COSMOS_CONTAINER`
-- `CONTENT_UNDERSTANDING_ENDPOINT`
-- `CONTENT_UNDERSTANDING_API_VERSION`
-- `CONTENT_UNDERSTANDING_ANALYZER_ID`
-- `AZURE_AI_SEARCH_ENDPOINT`
-- `AZURE_AI_SEARCH_INDEX_NAME`
-- `AZURE_AI_SEARCH_API_VERSION`
-- `AZURE_FOUNDRY_ENDPOINT`
-- `AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT`
-- `APPLICATIONINSIGHTS_CONNECTION_STRING` (optional)
-- `APPLICATIONINSIGHTS_ROLE_NAME` (optional)
-- `CONTENT_UNDERSTANDING_MAX_POLLS` (optional)
-- `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` (optional)
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`
+- `APPLICATIONINSIGHTS_ROLE_NAME`
+- `CONTENT_UNDERSTANDING_MAX_POLLS` (optional, default `40`)
+- `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` (optional, default `5000`)
 - `UPLOAD_WRITE_QUEUE_MESSAGE` (optional, default `false`)
 - `PLAYBACK_SAS_START_OFFSET_MINUTES` (optional)
 - `PLAYBACK_SAS_TTL_MINUTES` (optional)
 
 ### Worker
 
-Use the same storage, Cosmos DB, and Content Understanding settings, plus:
+The worker uses the same storage, Cosmos, Content Understanding, Search, and embedding settings. Additional worker settings:
 
-- `APPLICATIONINSIGHTS_CONNECTION_STRING` (optional)
-- `APPLICATIONINSIGHTS_ROLE_NAME` (optional)
-- `WORKER_POLL_INTERVAL_MS`
-- `WORKER_QUEUE_VISIBILITY_TIMEOUT`
-- `WORKER_TMP_DIR`
+- `WORKER_POLL_INTERVAL_MS` (optional, default `10000`)
+- `WORKER_QUEUE_VISIBILITY_TIMEOUT` (optional, default `300`)
+- `WORKER_TMP_DIR` (optional)
+- `CONTENT_UNDERSTANDING_ANALYZER_DEFINITION` (optional JSON override for analyzer creation)
+- `CONTENT_UNDERSTANDING_BASE_ANALYZER_ID` (optional, default `prebuilt-video`)
+- `CONTENT_UNDERSTANDING_TEMPLATE_ID` (optional, default `prebuilt-videoSegment`)
+- `CONTENT_UNDERSTANDING_PROCESSING_LOCATION` (optional, default `geography`)
+- `CONTENT_UNDERSTANDING_COMPLETION_MODEL` (optional, default `gpt-4.1`)
+- `CONTENT_UNDERSTANDING_SCHEMA_ANALYZER_ID` (optional fallback analyzer id)
 
 ## Commands
 
-- `npm run dev` — start the web app
-- `npm run lint` — run ESLint
-- `npm run build` — build the Next.js app
-- `npm run build:worker` — compile the FFmpeg worker
-- `npm run worker` — run the queue worker continuously
-- `npm run worker:once` — process at most one queue message and exit
+- `npm run dev` start the web app
+- `npm run lint` run ESLint
+- `npm run build` build the Next.js app
+- `npm run build:worker` compile the FFmpeg worker
+- `npm run worker` run the queue worker continuously
+- `npm run worker:once` process at most one queue message and exit
 
-## Azure deployment notes
+## Deploy to Azure (manual-first)
 
-1. Deploy the Bicep template in `/infra/main.bicep`.
-2. The template now provisions:
-   - Blob Storage, Queue Storage, Cosmos DB, Azure AI Search, a dedicated Azure AI Content Understanding account, Event Grid, a public frontend/API Container App, and the worker Container App
-   - Log Analytics and Application Insights for both runtime containers
-   - managed identity role assignments for Storage, Cosmos DB, Azure Container Registry pulls, Azure AI Search, and Content Understanding access for both container apps
-3. If you want Microsoft Entra sign-in in the deployed test app, register an Entra application for `https://<your-host>/api/auth/callback` and provide the corresponding secrets during deployment. If you skip those settings, the deployed app runs in demo sign-in mode.
-4. Build and publish both the frontend/API and worker container images, then set the environment variables for both containers. Search and embedding calls use managed identity in Azure, so no AI Search API key is required.
+### 1) Sign in and choose your subscription
 
-## GitHub Actions test deployment
+```bash
+az login
+az account set --subscription "<subscription-id-or-name>"
+```
 
-This repository includes manual GitHub Actions workflows to deploy and tear down a disposable Azure test environment:
+### 2) Create resource group and container registry
+
+```bash
+az group create --name <resource-group> --location <location>
+az acr create --name <acr-name> --resource-group <resource-group> --location <location> --sku Basic --admin-enabled false
+az acr show --name <acr-name> --resource-group <resource-group> --query loginServer -o tsv
+```
+
+### 3) Build and push container images
+
+```bash
+az acr login --name <acr-name>
+docker build -f Dockerfile.web -t <acr-login-server>/content-understanding-web:<tag> .
+docker push <acr-login-server>/content-understanding-web:<tag>
+
+docker build -f Dockerfile.worker -t <acr-login-server>/content-understanding-worker:<tag> .
+docker push <acr-login-server>/content-understanding-worker:<tag>
+```
+
+### 4) Create deployment parameters
+
+Copy and edit the example file:
+
+```bash
+cp infra/main.parameters.example.json infra/main.parameters.json
+```
+
+Set required values in `infra/main.parameters.json`:
+
+- `storageAccountName`
+- `cosmosAccountName`
+- `contentUnderstandingAccountName`
+- `webAppName`
+- `webContainerImage`
+- `workerContainerImage`
+- `containerRegistryName`
+- `containerRegistryLoginServer`
+
+Optional auth values (recommended for production):
+
+- `authClientId`
+- `authClientSecret`
+- `authTenantId`
+- `authSessionSecret`
+
+If auth values are empty, the app runs in demo sign-in mode.
+
+### 5) Deploy infrastructure
+
+```bash
+az deployment group create \
+   --name content-understanding-deploy \
+   --resource-group <resource-group> \
+   --template-file infra/main.bicep \
+   --parameters @infra/main.parameters.json
+```
+
+Get the deployed app URL:
+
+```bash
+az deployment group show \
+   --name content-understanding-deploy \
+   --resource-group <resource-group> \
+   --query properties.outputs.webAppUrl.value -o tsv
+```
+
+### 6) Create or refresh the Azure AI Search index
+
+Run the included script after first deployment (and anytime you need to rebuild schema):
+
+```powershell
+./scripts/recreate-search-index.ps1 -ResourceGroup <resource-group> -SearchServiceName <ai-search-service-name>
+```
+
+### 7) Validate end-to-end
+
+1. Open the deployed URL.
+2. Upload a test AVI file.
+3. Confirm worker activity in Container App logs.
+4. Confirm processed records appear on dashboard and search page.
+
+## Optional GitHub Actions deployment
+
+Manual workflows are provided:
 
 - `.github/workflows/deploy-test-environment.yml`
 - `.github/workflows/destroy-test-environment.yml`
 
-Configure these GitHub repository secrets before running the deployment workflow:
+Required repository secrets:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
 
-Optional application secrets:
+Optional app auth secrets:
 
 - `APP_ENTRA_ID_CLIENT_ID`
 - `APP_ENTRA_ID_CLIENT_SECRET`
 - `APP_ENTRA_ID_TENANT_ID`
 - `APP_AUTH_SESSION_SECRET`
 
-The deployment workflow:
+If optional app auth secrets are omitted, workflow deployment uses demo sign-in mode.
 
-1. validates the app with `npm run lint`, `npm run build`, and `npm run build:worker`
-2. builds and pushes the frontend/API and worker images to a temporary Azure Container Registry
-3. deploys the Azure infrastructure from `/infra/main.bicep`, including the Content Understanding account
-4. configures both Azure Container Apps to pull and run the published images with the provisioned Content Understanding endpoint
-5. writes the deployed URL into the workflow summary
+## Troubleshooting
+
+- Sign-in issues: verify Entra app redirect URI is `https://<your-host>/api/auth/callback` and all four auth env vars are set.
+- Search returns no results: run `scripts/recreate-search-index.ps1`, then upload and process at least one file.
+- Worker appears idle: verify queue name, storage URL, and worker logs.
+- 403 errors to Azure resources: confirm managed identity role assignments completed successfully.
 
 ## Architecture
 
-- Incoming AVI files are written to the **incoming blob container**.
-- A **BlobCreated** event is forwarded to **Azure Queue Storage** via Event Grid.
-- The **Azure Container App** scales on queue depth, converts AVI to MP4 with FFmpeg, then submits the MP4 to **Microsoft Foundry Content Understanding**.
-- The worker stores the MP4 in a separate container and writes normalized analysis documents to **Cosmos DB** and **Azure AI Search**.
-- The frontend reads Cosmos DB to power the dashboard, detail view, and search page.
+- Incoming AVI files are written to the upload blob container.
+- Blob-created events are forwarded to Azure Queue Storage via Event Grid.
+- The worker Container App scales on queue depth, converts AVI to MP4, and calls Content Understanding.
+- The worker stores MP4 files and normalized analysis in Cosmos DB and Azure AI Search.
+- The web app reads Cosmos DB and Search for dashboard, detail, and search experiences.

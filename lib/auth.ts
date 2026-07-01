@@ -13,7 +13,6 @@ export interface AppSession {
     email: string;
   };
   expiresAt: string;
-  isDemo: boolean;
 }
 
 function getSecret(): Uint8Array {
@@ -32,7 +31,7 @@ function getSecret(): Uint8Array {
     );
   }
 
-  return new TextEncoder().encode("content-understanding-demo-session-secret");
+  throw new Error("AUTH_SESSION_SECRET is required when Entra ID authentication is configured.");
 }
 
 function msalAuthority(): string {
@@ -60,24 +59,11 @@ export function shouldUseSecureCookies(): boolean {
   return authRedirectUri().startsWith("https://");
 }
 
-export function getDemoSession(): AppSession {
-  return {
-    user: {
-      id: "demo-user",
-      name: "Demo reviewer",
-      email: "demo.user@local.test",
-    },
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString(),
-    isDemo: true,
-  };
-}
-
 export async function createSessionToken(session: AppSession): Promise<string> {
   return new SignJWT({
     sub: session.user.id,
     name: session.user.name,
     email: session.user.email,
-    demo: session.isDemo,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -100,13 +86,12 @@ function payloadToSession(payload: JWTPayload): AppSession | null {
       typeof payload.exp === "number"
         ? new Date(payload.exp * 1000).toISOString()
         : new Date(Date.now() + 1000 * 60 * 60).toISOString(),
-    isDemo: payload.demo === true,
   };
 }
 
 export async function getAppSession(): Promise<AppSession | null> {
   if (!isAuthConfigured()) {
-    return getDemoSession();
+    return null;
   }
 
   const cookieStore = await cookies();

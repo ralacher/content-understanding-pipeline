@@ -1,0 +1,84 @@
+{
+  "baseAnalyzerId": "prebuilt-video",
+  "processingLocation": "geography",
+  "models": {
+    "completion": "gpt-4.1"
+  },
+  "config": {
+    "locales": [],
+    "returnDetails": false,
+    "disableFaceBlurring": false,
+    "enableSegment": false,
+    "omitContent": false
+  },
+  "fieldSchema": {
+    "fields": {
+      "summary": {
+        "type": "string",
+        "method": "generate",
+        "description": "Summary of the video contents."
+      },
+      "unsafeBehaviors": {
+        "type": "array",
+        "method": "generate",
+        "description": "Unsafe or review-worthy behaviors observed in the video.",
+        "items": {
+          "type": "object",
+          "method": "generate",
+          "properties": {
+            "description": {
+              "type": "string",
+              "method": "generate",
+              "description": "Description of the unsafe behavior."
+            },
+            "timestamp": {
+              "type": "string",
+              "method": "generate",
+              "description": "Timestamp indicating when the behavior starts."
+            }
+          }
+        }
+      },
+      "numberOfPeople": {
+        "type": "integer",
+        "method": "generate",
+        "description": "Number of people visible in the video."
+      },
+      "objectData": {
+        "type": "array",
+        "method": "generate",
+        "description": "Interesting or noteworthy objects identified in the video.",
+        "items": {
+          "type": "object",
+          "method": "generate",
+          "properties": {
+            "name": {
+              "type": "string",
+              "method": "generate",
+              "description": "Name of the object."
+            },
+            "description": {
+              "type": "string",
+              "method": "generate",
+              "description": "Description of the object."
+            }
+          }
+        }
+      },
+      "trainPassings": {
+        "type": "array",
+        "method": "generate",
+        "description": "Timestamps when trains are observed passing.",
+        "items": {
+          "type": "string",
+          "method": "generate"
+        }
+      },
+      "location": {
+        "type": "string",
+        "method": "generate",
+        "description": "Best-guess location shown in the video."
+      }
+    }
+  }
+}

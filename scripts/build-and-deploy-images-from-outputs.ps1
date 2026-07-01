@@ -73,7 +73,7 @@ function New-TrackedGitContext([string]$sourceRoot) {
 
   foreach ($file in $trackedFiles) {
     $sourcePath = Join-Path $resolvedRoot $file
-    if (-not (Test-Path $sourcePath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
       continue
     }
 
@@ -83,7 +83,7 @@ function New-TrackedGitContext([string]$sourceRoot) {
       New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
 
-    Copy-Item -Path $sourcePath -Destination $destPath -Force
+    Copy-Item -LiteralPath $sourcePath -Destination $destPath -Force
   }
 
   return $tempContext

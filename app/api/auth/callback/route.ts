@@ -49,7 +49,6 @@ export async function GET(request: NextRequest) {
         fallbackExpiry.setHours(fallbackExpiry.getHours() + 1);
         return fallbackExpiry.toISOString();
       })(),
-    isDemo: false,
   };
 
   const response = NextResponse.redirect(new URL("/", config.app.baseUrl));

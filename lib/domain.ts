@@ -1,7 +1,6 @@
 export const PROCESSING_STATUSES = [
   "uploaded",
   "converting",
-  "converted",
   "analyzing",
   "indexing",
   "completed",

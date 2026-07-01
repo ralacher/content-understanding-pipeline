@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAppSession } from "@/lib/auth";
-import { isAuthConfigured } from "@/lib/config";
+import { isAuthConfigured, isCloudConfigured } from "@/lib/config";
 import { uploadSourceFile } from "@/lib/storage";
 
 const SUPPORTED_VIDEO_EXTENSIONS = new Set([
@@ -26,6 +26,13 @@ function getFileExtension(fileName: string): string {
 
 export async function POST(request: Request) {
   const session = await getAppSession();
+
+  if (!isCloudConfigured()) {
+    return NextResponse.json(
+      { error: "Azure storage, queue, and Cosmos resources must be configured before uploads are allowed." },
+      { status: 503 },
+    );
+  }
 
   if (isAuthConfigured() && !session) {
     return NextResponse.json({ error: "Sign in is required before uploading." }, { status: 401 });
@@ -58,9 +65,9 @@ export async function POST(request: Request) {
     contentType: upload.type || "application/octet-stream",
     bytes,
     uploadedBy: session?.user || {
-      id: "anonymous-demo",
-      name: "Demo reviewer",
-      email: "demo.user@local.test",
+      id: "anonymous-user",
+      name: "Anonymous user",
+      email: "anonymous@local",
     },
   });
 

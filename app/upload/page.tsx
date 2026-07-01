@@ -30,11 +30,9 @@ export default async function UploadPage() {
             <div className="callout">
               <strong>Identity</strong>
               <p>
-                {session?.isDemo
-                  ? "Demo session active."
-                  : session
-                    ? `Signed in as ${session.user.email}.`
-                    : "Sign in with Entra ID to authorize uploads."}
+                {session
+                  ? `Signed in as ${session.user.email}.`
+                  : "Sign in with Entra ID to authorize uploads, or leave auth disabled for anonymous uploads."}
               </p>
             </div>
             <div className="callout">
@@ -42,7 +40,7 @@ export default async function UploadPage() {
               <p>
                 {cloudConfigured
                   ? "Azure resources are configured. Uploads will be written to Blob Storage and tracked in Cosmos DB."
-                  : "Azure resources are not configured yet. Uploads are stored locally in /tmp for demo purposes."}
+                  : "Azure resources are not configured yet. Uploads are blocked until Blob Storage, Queue, and Cosmos are configured."}
               </p>
             </div>
             <div className="callout">

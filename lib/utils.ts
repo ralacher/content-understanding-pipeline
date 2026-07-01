@@ -80,7 +80,6 @@ export function statusTone(status: ProcessingStatus): string {
       return "danger";
     case "uploaded":
     case "converting":
-    case "converted":
     case "analyzing":
     case "indexing":
       return "warning";

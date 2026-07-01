@@ -22,9 +22,7 @@ export interface RuntimeConfig {
     container?: string;
   };
   contentUnderstanding: {
-    endpoint?: string;
-    apiVersion: string;
-    analyzerId?: string;
+    analyzerUrl?: string;
     scope: string;
   };
   aiSearch: {
@@ -72,9 +70,7 @@ export function getRuntimeConfig(): RuntimeConfig {
       container: process.env.AZURE_COSMOS_CONTAINER || "media-records",
     },
     contentUnderstanding: {
-      endpoint: process.env.CONTENT_UNDERSTANDING_ENDPOINT,
-      apiVersion: process.env.CONTENT_UNDERSTANDING_API_VERSION || "2026-05-01",
-      analyzerId: process.env.CONTENT_UNDERSTANDING_ANALYZER_ID || "project-analyzer",
+      analyzerUrl: process.env.CONTENT_UNDERSTANDING_ANALYZER_URL,
       scope: process.env.CONTENT_UNDERSTANDING_SCOPE || "https://cognitiveservices.azure.com/.default",
     },
     aiSearch: {
@@ -84,7 +80,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     },
     embeddings: {
       endpoint: process.env.AZURE_FOUNDRY_ENDPOINT,
-      deployment: process.env.AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT || "text-embedding-3-small",
+      deployment: process.env.AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT || "text-embedding-3-large",
       apiVersion: process.env.AZURE_FOUNDRY_EMBEDDING_API_VERSION || "2024-05-01-preview",
       dimensions: Number.parseInt(process.env.AZURE_FOUNDRY_EMBEDDING_DIMENSIONS || "1536", 10),
       scope: process.env.AZURE_FOUNDRY_EMBEDDING_SCOPE || "https://cognitiveservices.azure.com/.default",

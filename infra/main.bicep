@@ -2,6 +2,7 @@ param location string = resourceGroup().location
 param environmentName string = 'content-understanding-env'
 param storageAccountName string
 param cosmosAccountName string
+param cosmosLocation string = location
 param webAppName string
 param containerAppName string = 'ffmpeg-worker'
 param logAnalyticsName string = 'content-understanding-logs'
@@ -25,9 +26,21 @@ param authClientSecret string = ''
 param authTenantId string = ''
 @secure()
 param authSessionSecret string = ''
-param contentUnderstandingApiVersion string = '2026-05-01'
-param contentUnderstandingAnalyzerId string = 'prebuilt-video'
-param uploadWriteQueueMessage bool = false
+param contentUnderstandingAnalyzerUrl string = ''
+param foundryReasoningDeploymentName string = 'gpt-5.2'
+param foundryReasoningModelVersion string = '2025-12-11'
+param foundryCompletionDeploymentName string = 'gpt-4.1-mini'
+param foundryCompletionModelVersion string = '2025-04-14'
+param foundryEmbeddingDeploymentName string = 'text-embedding-3-large'
+param foundryEmbeddingModelVersion string = '1'
+param uploadWriteQueueMessage bool = true
+param existingContainerAppsVnetName string = ''
+param existingContainerAppsSubnetName string = ''
+param existingContainerAppsVnetResourceGroup string = resourceGroup().name
+param containerAppsVnetName string = '${environmentName}-vnet'
+param containerAppsVnetAddressPrefix string = '10.240.0.0/16'
+param containerAppsInfrastructureSubnetName string = 'infrastructure'
+param containerAppsInfrastructureSubnetAddressPrefix string = '10.240.0.0/24'
 
 var storageBlobDataContributorRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -55,6 +68,8 @@ var searchIndexDataContributorRoleDefinitionId = subscriptionResourceId(
   '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
 )
 var storageAccountUrl = 'https://${storage.name}.blob.${environment().suffixes.storage}'
+var useExistingContainerAppsSubnet = !empty(existingContainerAppsVnetName) && !empty(existingContainerAppsSubnetName)
+var containerAppsInfrastructureSubnetId = useExistingContainerAppsSubnet ? existingContainerAppsSubnet.id : containerAppsInfrastructureSubnet.id
 var webAppBaseUrl = 'https://${webAppName}.${managedEnvironment.properties.defaultDomain}'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -95,6 +110,29 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storage
   name: 'default'
+  properties: {
+    cors: {
+      corsRules: [
+        {
+          allowedOrigins: [
+            webAppBaseUrl
+          ]
+          allowedMethods: [
+            'GET'
+            'HEAD'
+            'OPTIONS'
+          ]
+          allowedHeaders: [
+            '*'
+          ]
+          exposedHeaders: [
+            '*'
+          ]
+          maxAgeInSeconds: 3600
+        }
+      ]
+    }
+  }
 }
 
 resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
@@ -125,14 +163,14 @@ resource processingQueue 'Microsoft.Storage/storageAccounts/queueServices/queues
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   name: cosmosAccountName
-  location: location
+  location: cosmosLocation
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
     publicNetworkAccess: 'Enabled'
     locations: [
       {
-        locationName: location
+        locationName: cosmosLocation
         failoverPriority: 0
       }
     ]
@@ -187,6 +225,66 @@ resource contentUnderstanding 'Microsoft.CognitiveServices/accounts@2024-10-01' 
   }
 }
 
+resource foundryReasoningDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: contentUnderstanding
+  name: foundryReasoningDeploymentName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: foundryReasoningDeploymentName
+      version: foundryReasoningModelVersion
+    }
+    raiPolicyName: 'Microsoft.DefaultV2'
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+}
+
+resource foundryCompletionDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: contentUnderstanding
+  name: foundryCompletionDeploymentName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: foundryCompletionDeploymentName
+      version: foundryCompletionModelVersion
+    }
+    raiPolicyName: 'Microsoft.DefaultV2'
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+  dependsOn: [
+    foundryReasoningDeployment
+  ]
+}
+
+resource foundryEmbeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: contentUnderstanding
+  name: foundryEmbeddingDeploymentName
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 120
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: foundryEmbeddingDeploymentName
+      version: foundryEmbeddingModelVersion
+    }
+    raiPolicyName: 'Microsoft.DefaultV2'
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+  dependsOn: [
+    foundryCompletionDeployment
+  ]
+}
+
 resource aiSearch 'Microsoft.Search/searchServices@2024-03-01-preview' = {
   name: aiSearchServiceName
   location: location
@@ -196,6 +294,44 @@ resource aiSearch 'Microsoft.Search/searchServices@2024-03-01-preview' = {
   properties: {
     disableLocalAuth: true
     publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource existingContainerAppsVnet 'Microsoft.Network/virtualNetworks@2023-11-01' existing = if (useExistingContainerAppsSubnet) {
+  name: existingContainerAppsVnetName
+  scope: resourceGroup(existingContainerAppsVnetResourceGroup)
+}
+
+resource existingContainerAppsSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = if (useExistingContainerAppsSubnet) {
+  parent: existingContainerAppsVnet
+  name: existingContainerAppsSubnetName
+}
+
+resource containerAppsVnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (!useExistingContainerAppsSubnet) {
+  name: containerAppsVnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        containerAppsVnetAddressPrefix
+      ]
+    }
+  }
+}
+
+resource containerAppsInfrastructureSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' = if (!useExistingContainerAppsSubnet) {
+  parent: containerAppsVnet
+  name: containerAppsInfrastructureSubnetName
+  properties: {
+    addressPrefix: containerAppsInfrastructureSubnetAddressPrefix
+    delegations: [
+      {
+        name: 'containerAppsDelegation'
+        properties: {
+          serviceName: 'Microsoft.App/environments'
+        }
+      }
+    ]
   }
 }
 
@@ -209,6 +345,10 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
         customerId: logAnalytics.properties.customerId
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
+    }
+    vnetConfiguration: {
+      infrastructureSubnetId: containerAppsInfrastructureSubnetId
+      internal: false
     }
   }
 }
@@ -298,14 +438,12 @@ resource webApp 'Microsoft.App/containerApps@2026-01-01' = {
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
             { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
-            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
-            { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
-            { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+            { name: 'CONTENT_UNDERSTANDING_ANALYZER_URL', value: contentUnderstandingAnalyzerUrl }
             { name: 'AZURE_AI_SEARCH_ENDPOINT', value: 'https://${aiSearch.name}.search.windows.net' }
             { name: 'AZURE_AI_SEARCH_INDEX_NAME', value: 'content-understanding-assets' }
             { name: 'AZURE_AI_SEARCH_API_VERSION', value: '2024-07-01' }
             { name: 'AZURE_FOUNDRY_ENDPOINT', value: contentUnderstanding.properties.endpoint }
-            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: 'text-embedding-3-small' }
+            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: foundryEmbeddingDeploymentName }
             { name: 'UPLOAD_WRITE_QUEUE_MESSAGE', value: string(uploadWriteQueueMessage) }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
             { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'frontend-api' }
@@ -336,6 +474,7 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
     managedEnvironmentId: managedEnvironment.id
     configuration: {
       activeRevisionsMode: 'Single'
+      // No ingress block means the worker has no public endpoint.
       registries: [
         {
           server: containerRegistryLoginServer
@@ -360,14 +499,12 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_COSMOS_DATABASE', value: cosmosDatabaseName }
             { name: 'AZURE_COSMOS_CONTAINER', value: cosmosContainerName }
-            { name: 'CONTENT_UNDERSTANDING_ENDPOINT', value: contentUnderstanding.properties.endpoint }
-            { name: 'CONTENT_UNDERSTANDING_API_VERSION', value: contentUnderstandingApiVersion }
-            { name: 'CONTENT_UNDERSTANDING_ANALYZER_ID', value: contentUnderstandingAnalyzerId }
+            { name: 'CONTENT_UNDERSTANDING_ANALYZER_URL', value: contentUnderstandingAnalyzerUrl }
             { name: 'AZURE_AI_SEARCH_ENDPOINT', value: 'https://${aiSearch.name}.search.windows.net' }
             { name: 'AZURE_AI_SEARCH_INDEX_NAME', value: 'content-understanding-assets' }
             { name: 'AZURE_AI_SEARCH_API_VERSION', value: '2024-07-01' }
             { name: 'AZURE_FOUNDRY_ENDPOINT', value: contentUnderstanding.properties.endpoint }
-            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: 'text-embedding-3-small' }
+            { name: 'AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT', value: foundryEmbeddingDeploymentName }
             { name: 'APP_BASE_URL', value: webAppBaseUrl }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsights.properties.ConnectionString }
             { name: 'APPLICATIONINSIGHTS_ROLE_NAME', value: 'worker' }

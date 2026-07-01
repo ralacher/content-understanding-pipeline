@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CosmosClient } from "@azure/cosmos";
 import {
@@ -12,7 +11,6 @@ import {
 import { QueueClient } from "@azure/storage-queue";
 import { getRuntimeConfig, isCloudConfigured } from "./config";
 import { getTokenCredential } from "./credential";
-import { demoRecords } from "./demo-data";
 import { DashboardSnapshot, MediaRecord, ModelTokenKpi } from "./domain";
 import { slugifyFileName, sortRecords } from "./utils";
 
@@ -22,9 +20,6 @@ type ModelTokenAggregate = {
   cachedInputTokens: number;
   otherTokens: number;
 };
-
-const DEMO_DB_PATH = "/tmp/content-understanding-pipeline/demo-records.json";
-const DEMO_UPLOAD_PATH = "/tmp/content-understanding-pipeline/uploads";
 
 function getCredential() {
   return getTokenCredential();
@@ -65,27 +60,6 @@ function getCosmosContainer() {
   return cosmos.database(config.cosmos.database!).container(config.cosmos.container!);
 }
 
-async function ensureDemoStore(): Promise<void> {
-  await mkdir(dirname(DEMO_DB_PATH), { recursive: true });
-
-  try {
-    await readFile(DEMO_DB_PATH, "utf8");
-  } catch {
-    await writeFile(DEMO_DB_PATH, JSON.stringify(demoRecords, null, 2), "utf8");
-  }
-}
-
-async function readDemoStore(): Promise<MediaRecord[]> {
-  await ensureDemoStore();
-  const contents = await readFile(DEMO_DB_PATH, "utf8");
-  return JSON.parse(contents) as MediaRecord[];
-}
-
-async function writeDemoStore(records: MediaRecord[]): Promise<void> {
-  await ensureDemoStore();
-  await writeFile(DEMO_DB_PATH, JSON.stringify(sortRecords(records), null, 2), "utf8");
-}
-
 export function buildSourceBlobName(fileName: string, id: string): string {
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
   return `${stamp}/${id}-${slugifyFileName(fileName)}`;
@@ -101,7 +75,7 @@ export function buildProcessedBlobName(sourceBlobName: string): string {
 
 export async function listMediaRecords(limit?: number): Promise<MediaRecord[]> {
   if (!isCloudConfigured()) {
-    const records = sortRecords(await readDemoStore());
+    const records: MediaRecord[] = [];
     return typeof limit === "number" ? records.slice(0, limit) : records;
   }
 
@@ -119,11 +93,24 @@ export async function listMediaRecords(limit?: number): Promise<MediaRecord[]> {
 
 export async function getMediaRecord(id: string): Promise<MediaRecord | null> {
   if (!isCloudConfigured()) {
-    const records = await readDemoStore();
-    return records.find((record) => record.id === id) || null;
+    return null;
   }
 
   const container = getCosmosContainer();
+  // Prefer a point-read with partition key for reliability and lower latency.
+  try {
+    const response = await container.item(id, id).read<MediaRecord>();
+    if (response.resource?.type === "mediaRecord") {
+      return response.resource;
+    }
+  } catch (error) {
+    const statusCode = (error as { code?: number; statusCode?: number } | undefined)?.statusCode
+      ?? (error as { code?: number; statusCode?: number } | undefined)?.code;
+    if (statusCode && statusCode !== 404) {
+      throw error;
+    }
+  }
+
   const { resources } = await container.items
     .query<MediaRecord>({
       query: "SELECT * FROM c WHERE c.id = @id AND c.type = @type",
@@ -134,13 +121,18 @@ export async function getMediaRecord(id: string): Promise<MediaRecord | null> {
     })
     .fetchAll();
 
-  return resources[0] || null;
+  if (resources[0]) {
+    return resources[0];
+  }
+
+  // Final fallback: when point-read/query edge cases occur, scan known media records once.
+  const records = await listMediaRecords();
+  return records.find((record) => record.id === id) || null;
 }
 
 export async function getMediaRecordBySourceBlobName(blobName: string): Promise<MediaRecord | null> {
   if (!isCloudConfigured()) {
-    const records = await readDemoStore();
-    return records.find((record) => record.sourceBlobName === blobName) || null;
+    return null;
   }
 
   const container = getCosmosContainer();
@@ -159,10 +151,7 @@ export async function getMediaRecordBySourceBlobName(blobName: string): Promise<
 
 export async function upsertMediaRecord(record: MediaRecord): Promise<MediaRecord> {
   if (!isCloudConfigured()) {
-    const records = await readDemoStore();
-    const next = [...records.filter((item) => item.id !== record.id), record];
-    await writeDemoStore(next);
-    return record;
+    throw new Error("Azure storage and Cosmos DB must be configured before records can be written.");
   }
 
   const container = getCosmosContainer();
@@ -185,7 +174,7 @@ export async function buildDashboardSnapshot(): Promise<DashboardSnapshot> {
   );
   const tokenUsageByModel = buildTokenUsageByModel(completed);
 
-  const breakdownOrder = ["uploaded", "converting", "converted", "analyzing", "completed", "failed"] as const;
+  const breakdownOrder = ["uploaded", "converting", "analyzing", "completed", "failed"] as const;
 
   return {
     kpis: {
@@ -292,9 +281,7 @@ export async function uploadSourceFile(input: {
     fileName: input.fileName,
     sourceBlobName,
     status: "uploaded",
-    summary: isCloudConfigured()
-      ? "Upload completed and waiting for the containerized conversion worker."
-      : "Demo upload captured locally. Configure Azure resources to enable automatic conversion.",
+    summary: "Upload completed and waiting for the containerized conversion worker.",
     createdAt: now,
     updatedAt: now,
     uploadedBy: input.uploadedBy,
@@ -304,9 +291,7 @@ export async function uploadSourceFile(input: {
         title: "Upload accepted",
         summary: "The AVI file was accepted and stored successfully.",
         bullets: [
-          isCloudConfigured()
-            ? "The storage-triggered worker will pick up the file automatically."
-            : "This environment is running in demo mode with local file persistence.",
+          "The storage-triggered worker will pick up the file automatically.",
         ],
       },
     ],
@@ -314,10 +299,7 @@ export async function uploadSourceFile(input: {
   };
 
   if (!isCloudConfigured()) {
-    await mkdir(DEMO_UPLOAD_PATH, { recursive: true });
-    await writeFile(join(DEMO_UPLOAD_PATH, `${id}-${slugifyFileName(input.fileName)}`), input.bytes);
-    await upsertMediaRecord(record);
-    return record;
+    throw new Error("Azure storage, queue, and Cosmos resources must be configured before uploads are allowed.");
   }
 
   const config = getRuntimeConfig();
@@ -340,7 +322,7 @@ export async function uploadSourceFile(input: {
 
 export async function queueRecordForProcessing(recordId: string, blobName: string): Promise<void> {
   if (!isCloudConfigured()) {
-    return;
+    throw new Error("Azure storage and queue resources must be configured before queueing work.");
   }
 
   const queue = getQueueClient();

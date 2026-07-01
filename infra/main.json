@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.35.1.17967",
-      "templateHash": "8143687515245222627"
+      "templateHash": "8564506270254995617"
     }
   },
   "parameters": {
@@ -22,6 +22,10 @@
     },
     "cosmosAccountName": {
       "type": "string"
+    },
+    "cosmosLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]"
     },
     "webAppName": {
       "type": "string"
@@ -101,17 +105,65 @@
       "type": "securestring",
       "defaultValue": ""
     },
-    "contentUnderstandingApiVersion": {
+    "contentUnderstandingAnalyzerUrl": {
       "type": "string",
-      "defaultValue": "2026-05-01"
+      "defaultValue": ""
     },
-    "contentUnderstandingAnalyzerId": {
+    "foundryReasoningDeploymentName": {
       "type": "string",
-      "defaultValue": "prebuilt-video"
+      "defaultValue": "gpt-5.2"
+    },
+    "foundryReasoningModelVersion": {
+      "type": "string",
+      "defaultValue": "2025-12-11"
+    },
+    "foundryCompletionDeploymentName": {
+      "type": "string",
+      "defaultValue": "gpt-4.1-mini"
+    },
+    "foundryCompletionModelVersion": {
+      "type": "string",
+      "defaultValue": "2025-04-14"
+    },
+    "foundryEmbeddingDeploymentName": {
+      "type": "string",
+      "defaultValue": "text-embedding-3-large"
+    },
+    "foundryEmbeddingModelVersion": {
+      "type": "string",
+      "defaultValue": "1"
     },
     "uploadWriteQueueMessage": {
       "type": "bool",
-      "defaultValue": false
+      "defaultValue": true
+    },
+    "existingContainerAppsVnetName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContainerAppsSubnetName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContainerAppsVnetResourceGroup": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().name]"
+    },
+    "containerAppsVnetName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-vnet', parameters('environmentName'))]"
+    },
+    "containerAppsVnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.240.0.0/16"
+    },
+    "containerAppsInfrastructureSubnetName": {
+      "type": "string",
+      "defaultValue": "infrastructure"
+    },
+    "containerAppsInfrastructureSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.240.0.0/24"
     }
   },
   "variables": {
@@ -122,7 +174,9 @@
     "cosmosBuiltInDataContributorRoleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
     "searchServiceContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')]",
     "searchIndexDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')]",
-    "storageAccountUrl": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]"
+    "storageAccountUrl": "[format('https://{0}.blob.{1}', parameters('storageAccountName'), environment().suffixes.storage)]",
+    "useExistingContainerAppsSubnet": "[and(not(empty(parameters('existingContainerAppsVnetName'))), not(empty(parameters('existingContainerAppsSubnetName'))))]",
+    "containerAppsInfrastructureSubnetId": "[if(variables('useExistingContainerAppsSubnet'), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('existingContainerAppsVnetResourceGroup')), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingContainerAppsVnetName'), parameters('existingContainerAppsSubnetName')), resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('containerAppsVnetName'), parameters('containerAppsInfrastructureSubnetName')))]"
   },
   "resources": [
     {
@@ -170,7 +224,31 @@
       "type": "Microsoft.Storage/storageAccounts/blobServices",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}', parameters('storageAccountName'), 'default')]",
+      "properties": {
+        "cors": {
+          "corsRules": [
+            {
+              "allowedOrigins": [
+                "[format('https://{0}.{1}', parameters('webAppName'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain)]"
+              ],
+              "allowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "allowedHeaders": [
+                "*"
+              ],
+              "exposedHeaders": [
+                "*"
+              ],
+              "maxAgeInSeconds": 3600
+            }
+          ]
+        }
+      },
       "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
       ]
     },
@@ -216,14 +294,14 @@
       "type": "Microsoft.DocumentDB/databaseAccounts",
       "apiVersion": "2024-05-15",
       "name": "[parameters('cosmosAccountName')]",
-      "location": "[parameters('location')]",
+      "location": "[parameters('cosmosLocation')]",
       "kind": "GlobalDocumentDB",
       "properties": {
         "databaseAccountOfferType": "Standard",
         "publicNetworkAccess": "Enabled",
         "locations": [
           {
-            "locationName": "[parameters('location')]",
+            "locationName": "[parameters('cosmosLocation')]",
             "failoverPriority": 0
           }
         ],
@@ -287,6 +365,71 @@
       }
     },
     {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', parameters('contentUnderstandingAccountName'), parameters('foundryReasoningDeploymentName'))]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 10
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('foundryReasoningDeploymentName')]",
+          "version": "[parameters('foundryReasoningModelVersion')]"
+        },
+        "raiPolicyName": "Microsoft.DefaultV2",
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', parameters('contentUnderstandingAccountName'), parameters('foundryCompletionDeploymentName'))]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 10
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('foundryCompletionDeploymentName')]",
+          "version": "[parameters('foundryCompletionModelVersion')]"
+        },
+        "raiPolicyName": "Microsoft.DefaultV2",
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('contentUnderstandingAccountName'), parameters('foundryReasoningDeploymentName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', parameters('contentUnderstandingAccountName'), parameters('foundryEmbeddingDeploymentName'))]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 120
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('foundryEmbeddingDeploymentName')]",
+          "version": "[parameters('foundryEmbeddingModelVersion')]"
+        },
+        "raiPolicyName": "Microsoft.DefaultV2",
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('contentUnderstandingAccountName'), parameters('foundryCompletionDeploymentName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.Search/searchServices",
       "apiVersion": "2024-03-01-preview",
       "name": "[parameters('aiSearchServiceName')]",
@@ -300,6 +443,40 @@
       }
     },
     {
+      "condition": "[not(variables('useExistingContainerAppsSubnet'))]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('containerAppsVnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('containerAppsVnetAddressPrefix')]"
+          ]
+        }
+      }
+    },
+    {
+      "condition": "[not(variables('useExistingContainerAppsSubnet'))]",
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', parameters('containerAppsVnetName'), parameters('containerAppsInfrastructureSubnetName'))]",
+      "properties": {
+        "addressPrefix": "[parameters('containerAppsInfrastructureSubnetAddressPrefix')]",
+        "delegations": [
+          {
+            "name": "containerAppsDelegation",
+            "properties": {
+              "serviceName": "Microsoft.App/environments"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('containerAppsVnetName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[parameters('environmentName')]",
@@ -311,9 +488,14 @@
             "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName')), '2023-09-01').customerId]",
             "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName')), '2023-09-01').primarySharedKey]"
           }
+        },
+        "vnetConfiguration": {
+          "infrastructureSubnetId": "[variables('containerAppsInfrastructureSubnetId')]",
+          "internal": false
         }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('containerAppsVnetName'), parameters('containerAppsInfrastructureSubnetName'))]",
         "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName'))]"
       ]
     },
@@ -459,16 +641,8 @@
                   "value": "[parameters('cosmosContainerName')]"
                 },
                 {
-                  "name": "CONTENT_UNDERSTANDING_ENDPOINT",
-                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
-                },
-                {
-                  "name": "CONTENT_UNDERSTANDING_API_VERSION",
-                  "value": "[parameters('contentUnderstandingApiVersion')]"
-                },
-                {
-                  "name": "CONTENT_UNDERSTANDING_ANALYZER_ID",
-                  "value": "[parameters('contentUnderstandingAnalyzerId')]"
+                  "name": "CONTENT_UNDERSTANDING_ANALYZER_URL",
+                  "value": "[parameters('contentUnderstandingAnalyzerUrl')]"
                 },
                 {
                   "name": "AZURE_AI_SEARCH_ENDPOINT",
@@ -488,7 +662,7 @@
                 },
                 {
                   "name": "AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT",
-                  "value": "text-embedding-3-small"
+                  "value": "[parameters('foundryEmbeddingDeploymentName')]"
                 },
                 {
                   "name": "UPLOAD_WRITE_QUEUE_MESSAGE",
@@ -583,16 +757,8 @@
                   "value": "[parameters('cosmosContainerName')]"
                 },
                 {
-                  "name": "CONTENT_UNDERSTANDING_ENDPOINT",
-                  "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentUnderstandingAccountName')), '2024-10-01').endpoint]"
-                },
-                {
-                  "name": "CONTENT_UNDERSTANDING_API_VERSION",
-                  "value": "[parameters('contentUnderstandingApiVersion')]"
-                },
-                {
-                  "name": "CONTENT_UNDERSTANDING_ANALYZER_ID",
-                  "value": "[parameters('contentUnderstandingAnalyzerId')]"
+                  "name": "CONTENT_UNDERSTANDING_ANALYZER_URL",
+                  "value": "[parameters('contentUnderstandingAnalyzerUrl')]"
                 },
                 {
                   "name": "AZURE_AI_SEARCH_ENDPOINT",
@@ -612,7 +778,7 @@
                 },
                 {
                   "name": "AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT",
-                  "value": "text-embedding-3-small"
+                  "value": "[parameters('foundryEmbeddingDeploymentName')]"
                 },
                 {
                   "name": "APP_BASE_URL",

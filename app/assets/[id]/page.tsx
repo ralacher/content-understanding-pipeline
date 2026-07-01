@@ -27,7 +27,6 @@ function statusReached(stage: "uploaded" | "converting" | "analyzing" | "indexin
   const rank: Record<ProcessingStatus, number> = {
     uploaded: 0,
     converting: 1,
-    converted: 1,
     analyzing: 2,
     indexing: 3,
     completed: 4,

@@ -8,6 +8,9 @@
     "cosmosAccountName": {
       "value": "yourcosmosacct"
     },
+    "cosmosLocation": {
+      "value": "westus3"
+    },
     "contentUnderstandingAccountName": {
       "value": "yourcontentunderstandingacct"
     },
@@ -32,14 +35,32 @@
     "appTitle": {
       "value": "Content Understanding Hub"
     },
-    "contentUnderstandingApiVersion": {
-      "value": "2026-05-01"
+    "contentUnderstandingAnalyzerUrl": {
+      "value": "https://your-content-understanding-account.services.ai.azure.com/contentunderstanding/analyzers/yourAnalyzerName?api-version=2025-11-01"
     },
-    "contentUnderstandingAnalyzerId": {
-      "value": "prebuilt-video"
+    "existingContainerAppsVnetName": {
+      "value": ""
+    },
+    "existingContainerAppsSubnetName": {
+      "value": ""
+    },
+    "existingContainerAppsVnetResourceGroup": {
+      "value": ""
+    },
+    "containerAppsVnetName": {
+      "value": "content-understanding-env-vnet"
+    },
+    "containerAppsVnetAddressPrefix": {
+      "value": "10.240.0.0/16"
+    },
+    "containerAppsInfrastructureSubnetName": {
+      "value": "infrastructure"
+    },
+    "containerAppsInfrastructureSubnetAddressPrefix": {
+      "value": "10.240.0.0/24"
     },
     "uploadWriteQueueMessage": {
-      "value": false
+      "value": true
     },
     "authClientId": {
       "value": ""

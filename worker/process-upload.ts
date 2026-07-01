@@ -85,237 +85,26 @@ function getEnvNumber(name: string, fallback: number): number {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
 }
 
-function getAnalyzerDefinition(analyzerId: string): Record<string, unknown> {
-  const raw = process.env.CONTENT_UNDERSTANDING_ANALYZER_DEFINITION;
-  if (raw) {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      ...parsed,
-      analyzerId,
-    };
+function isContentUnderstandingUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("preview api is not supported in this region") ||
+    message.includes("resource not found")
+  );
+}
+
+function resolveAnalyzerUrl(analyzerUrl: string): { analyzerUrl: string; apiVersion: string } {
+  const url = new URL(analyzerUrl);
+  const apiVersion = url.searchParams.get("api-version");
+
+  if (!apiVersion) {
+    throw new Error("Configured Content Understanding analyzer URL is missing the api-version query parameter.");
   }
 
   return {
-    baseAnalyzerId: process.env.CONTENT_UNDERSTANDING_BASE_ANALYZER_ID || "prebuilt-video",
-    templateId: process.env.CONTENT_UNDERSTANDING_TEMPLATE_ID || "prebuilt-videoSegment",
-    processingLocation: process.env.CONTENT_UNDERSTANDING_PROCESSING_LOCATION || "geography",
-    analyzerId,
-    models: {
-      completion: process.env.CONTENT_UNDERSTANDING_COMPLETION_MODEL || "gpt-4.1",
-    },
-    config: {
-      locales: [],
-      returnDetails: false,
-      disableContentFiltering: true,
-      disableFaceBlurring: false,
-      enableSegment: false,
-      omitContent: false,
-    },
-    fieldSchema: {
-      fields: {
-        summary: {
-          type: "string",
-          method: "generate",
-          description: "Summary of the video contents",
-        },
-        tags: {
-          type: "array",
-          items: {
-            type: "string",
-            method: "generate",
-          },
-          method: "generate",
-          description:
-            "Return 3-8 lowercase tags for subway security/wellbeing/public-safety observations, focusing on incidents, risks, behaviors, platform safety, crowding, train operations, emergencies, and accessibility. Prefer tags from: platform-safety, crowding, altercation, pushing, fall-risk, trespassing, unattended-item, emergency-response, accessibility, suspicious-behavior, train-arrival, track-intrusion.",
-        },
-        numberOfPeople: {
-          type: "integer",
-          method: "generate",
-          description: "Number of individuals identified in the video",
-        },
-        unsafeBehaviors: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              description: {
-                type: "string",
-                method: "generate",
-                description: "Description of the unsafe behavior",
-              },
-              timestamp: {
-                type: "string",
-                method: "generate",
-                description: "Timestamp indicating start of the unsafe behavior",
-              },
-            },
-            method: "generate",
-          },
-          method: "generate",
-          description:
-            "Examples include people lingering near tracks, unusual behavior, or situations that should be flagged for review",
-        },
-        objectData: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              name: {
-                type: "string",
-                method: "generate",
-                description: "Name of the object",
-              },
-              description: {
-                type: "string",
-                method: "generate",
-                description: "Description of the object",
-              },
-            },
-            method: "generate",
-          },
-          method: "generate",
-          description: "Interesting objects identified (dangerous, unusual, otherwise noteworthy items or personal effects).",
-        },
-        trainPassings: {
-          type: "array",
-          items: {
-            type: "string",
-            method: "generate",
-          },
-          method: "generate",
-          description: "Timestamps when trains are observed passing by",
-        },
-        location: {
-          type: "string",
-          method: "generate",
-          description: "Name of the location (best guess)",
-        },
-      },
-      definitions: {},
-    },
+    analyzerUrl: `${url.origin}${url.pathname}`,
+    apiVersion,
   };
-}
-
-async function ensureAnalyzerExists(
-  endpoint: string,
-  apiVersion: string,
-  analyzerId: string,
-  bearerToken: string,
-): Promise<string> {
-  const ensured =
-    globalThis.__contentUnderstandingAnalyzersEnsured ||
-    (globalThis.__contentUnderstandingAnalyzersEnsured = new Set<string>());
-
-  if (ensured.has(analyzerId)) {
-    return analyzerId;
-  }
-
-  const analyzerUrl = `${endpoint.replace(/\/$/, "")}/contentunderstanding/analyzers/${encodeURIComponent(analyzerId)}?api-version=${apiVersion}`;
-
-  const expectedDefinition = getAnalyzerDefinition(analyzerId);
-
-  const lookupResponse = await fetch(analyzerUrl, {
-    method: "GET",
-    headers: {
-      Authorization: getBearerToken(bearerToken),
-    },
-  });
-
-  if (lookupResponse.ok) {
-    const existing = (await lookupResponse.json().catch(() => ({}))) as Record<string, unknown>;
-    const existingFieldSchema =
-      ((existing.fieldSchema as Record<string, unknown> | undefined)?.fields as Record<string, unknown> | undefined) || {};
-    const expectedFieldSchema =
-      ((expectedDefinition.fieldSchema as Record<string, unknown> | undefined)?.fields as Record<string, unknown> | undefined) || {};
-
-    const requiredFieldNames = Object.keys(expectedFieldSchema);
-    const missingRequiredField = requiredFieldNames.some((fieldName) => !(fieldName in existingFieldSchema));
-
-    if (!missingRequiredField) {
-      ensured.add(analyzerId);
-      return analyzerId;
-    }
-
-    // Analyzer exists but is missing required fields from our schema; update in place.
-    const updateResponse = await fetch(analyzerUrl, {
-      method: "PUT",
-      headers: {
-        Authorization: getBearerToken(bearerToken),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(expectedDefinition),
-    });
-
-    if (!updateResponse.ok) {
-      const updatePayload = await updateResponse.text().catch(() => "");
-
-      if (updateResponse.status === 409 && updatePayload.includes("ModelExists")) {
-        const fallbackAnalyzerId =
-          process.env.CONTENT_UNDERSTANDING_SCHEMA_ANALYZER_ID || `${analyzerId}_schema_v2`;
-        const fallbackUrl = `${endpoint.replace(/\/$/, "")}/contentunderstanding/analyzers/${encodeURIComponent(fallbackAnalyzerId)}?api-version=${apiVersion}`;
-        const fallbackDefinition = getAnalyzerDefinition(fallbackAnalyzerId);
-        const fallbackResponse = await fetch(fallbackUrl, {
-          method: "PUT",
-          headers: {
-            Authorization: getBearerToken(bearerToken),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(fallbackDefinition),
-        });
-
-        if (!fallbackResponse.ok) {
-          const fallbackPayload = await fallbackResponse.text().catch(() => "");
-          if (!(fallbackResponse.status === 409 && fallbackPayload.includes("ModelExists"))) {
-            throw new Error(
-              `Content Understanding fallback analyzer create failed (${fallbackAnalyzerId}) with ${fallbackResponse.status}${fallbackPayload ? `: ${fallbackPayload}` : "."}`,
-            );
-          }
-        }
-
-        ensured.add(fallbackAnalyzerId);
-        return fallbackAnalyzerId;
-      }
-
-      throw new Error(
-        `Content Understanding analyzer update failed (${analyzerId}) with ${updateResponse.status}${updatePayload ? `: ${updatePayload}` : "."}`,
-      );
-    }
-
-    ensured.add(analyzerId);
-    return analyzerId;
-  }
-
-  if (lookupResponse.status !== 404) {
-    const lookupPayload = await lookupResponse.text().catch(() => "");
-    throw new Error(
-      `Content Understanding analyzer lookup failed (${analyzerId}) with ${lookupResponse.status}${lookupPayload ? `: ${lookupPayload}` : "."}`,
-    );
-  }
-
-  const ensureResponse = await fetch(analyzerUrl, {
-    method: "PUT",
-    headers: {
-      Authorization: getBearerToken(bearerToken),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(expectedDefinition),
-  });
-
-  if (!ensureResponse.ok) {
-    const payload = await ensureResponse.text().catch(() => "");
-
-    if (ensureResponse.status === 409 && payload.includes("ModelExists")) {
-      ensured.add(analyzerId);
-      return analyzerId;
-    }
-
-    throw new Error(
-      `Content Understanding analyzer create-or-replace failed (${analyzerId}) with ${ensureResponse.status}${payload ? `: ${payload}` : "."}`,
-    );
-  }
-
-  ensured.add(analyzerId);
-  return analyzerId;
 }
 
 async function updateRecord(record: MediaRecord, patch: Partial<MediaRecord>): Promise<MediaRecord> {
@@ -336,9 +125,9 @@ async function analyzeProcessedVideo(record: MediaRecord): Promise<unknown> {
   const config = getRuntimeConfig();
   const playbackUrl = await buildPlaybackUrl(record);
 
-  if (!config.contentUnderstanding.endpoint || !playbackUrl) {
+  if (!config.contentUnderstanding.analyzerUrl || !playbackUrl) {
     return {
-      summary: "Content Understanding endpoint not configured. Conversion completed without analysis.",
+      summary: "Content Understanding analyzer URL not configured. Conversion completed without analysis.",
       keywords: ["conversion-only"],
     };
   }
@@ -347,21 +136,14 @@ async function analyzeProcessedVideo(record: MediaRecord): Promise<unknown> {
   const token = await credential.getToken(config.contentUnderstanding.scope);
   const maxPollAttempts = getEnvNumber("CONTENT_UNDERSTANDING_MAX_POLLS", 40);
   const pollIntervalMs = getEnvNumber("CONTENT_UNDERSTANDING_POLL_INTERVAL_MS", 5000);
-  const analyzerId = config.contentUnderstanding.analyzerId || "project-analyzer";
+  const analyzerReference = resolveAnalyzerUrl(config.contentUnderstanding.analyzerUrl);
 
   if (!token?.token) {
     throw new Error("Unable to acquire an access token for Content Understanding.");
   }
 
-  const resolvedAnalyzerId = await ensureAnalyzerExists(
-    config.contentUnderstanding.endpoint,
-    config.contentUnderstanding.apiVersion,
-    analyzerId,
-    token.token,
-  );
-
   const analyzeResponse = await fetch(
-    `${config.contentUnderstanding.endpoint.replace(/\/$/, "")}/contentunderstanding/analyzers/${encodeURIComponent(resolvedAnalyzerId)}:analyze?api-version=${config.contentUnderstanding.apiVersion}`,
+    `${analyzerReference.analyzerUrl}:analyze?api-version=${analyzerReference.apiVersion}`,
     {
       method: "POST",
       headers: {
@@ -464,7 +246,32 @@ async function processMessage(payload: QueuePayload): Promise<void> {
       : "MP4 generated successfully. Content Understanding analysis is running.",
   });
 
-  const analysisPayload = await analyzeProcessedVideo(record);
+  let analysisPayload: unknown;
+  try {
+    analysisPayload = await analyzeProcessedVideo(record);
+  } catch (error) {
+    if (isContentUnderstandingUnavailableError(error)) {
+      await updateRecord(record, {
+        status: "failed",
+        summary:
+          "Video conversion succeeded, but Content Understanding analysis is unavailable in this region/account configuration.",
+        errorMessage: error instanceof Error ? error.message : "Content Understanding is unavailable.",
+      });
+      return;
+    }
+
+    await updateRecord(record, {
+      status: "failed",
+      summary: "Video conversion succeeded, but Content Understanding analysis failed.",
+      errorMessage:
+        error instanceof Error
+          ? error.message
+          : "Content Understanding analysis failed.",
+    });
+
+    throw error;
+  }
+
   const normalized = normalizeAnalysisResult(analysisPayload);
   const indexedAt = new Date().toISOString();
 

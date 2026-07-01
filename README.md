@@ -1,138 +1,143 @@
 # Content Understanding Pipeline
 
-A Next.js web experience plus Azure worker pipeline for Microsoft Foundry Content Understanding.
+A Next.js web application plus Azure worker pipeline for video upload, FFmpeg conversion, Content Understanding analysis, Cosmos persistence, and Azure AI Search indexing.
 
-## What is included
+This repository is prepared for customer-facing deployment with these assumptions:
 
-- Overview dashboard with KPIs, status breakdowns, and failure summaries
-- Upload flow for AVI files
-- Detail page with normalized analysis sections and MP4 playback
-- Search page with keyword plus vector search
-- Azure-backed API for uploads, dashboard, details, and search
-- Worker for AVI to MP4 conversion, Content Understanding analysis, Cosmos persistence, and Azure AI Search indexing
-- Bicep infrastructure starter for Storage, Queue, Cosmos DB, Azure AI Search, Content Understanding, Event Grid, Container Apps, Log Analytics, and Application Insights
+- Azure infrastructure is provisioned by Bicep.
+- Azure AI Services / Foundry model deployments are provisioned by Bicep.
+- The Content Understanding analyzer is created manually in the CU portal.
+- The worker is given the analyzer URL through configuration and does not create or update analyzers.
+
+## What Is Included
+
+- Web dashboard for upload status, failure visibility, and asset detail views
+- Upload API that writes source files to Blob Storage and queues work
+- Worker that converts to MP4, calls Content Understanding, normalizes results, and indexes search
+- Azure AI Search integration for lexical and vector search
+- Bicep template for Storage, Queue, Cosmos DB, AI Search, AI Services / Foundry, Container Apps, Event Grid, Log Analytics, and Application Insights
+- Portal-ready Content Understanding analyzer definition at [infra/content-understanding-analyzer.portal.json](infra/content-understanding-analyzer.portal.json)
+
+## High-Level Solution Flow
+
+```mermaid
+flowchart LR
+   User[User in Web UI] --> Upload[Upload video]
+   Upload --> Api[Next.js API]
+   Api --> Blob[Azure Storage upload container]
+   Api --> Queue[Azure Queue message]
+
+   Queue --> Worker[Worker container app]
+   Worker --> Source[Download source video]
+   Worker --> Convert[Convert to MP4 when needed]
+   Convert --> Processed[Azure Storage processed container]
+   Processed --> Analyze[Call Content Understanding analyzer URL]
+   Analyze --> Normalize[Normalize analysis result]
+   Normalize --> Cosmos[Persist media record in Cosmos DB]
+   Normalize --> Search[Index searchable document in Azure AI Search]
+
+   Cosmos --> Dashboard[Dashboard and asset detail APIs]
+   Search --> SearchUi[Search UI]
+   Dashboard --> User
+   SearchUi --> User
+```
+
+## Detailed Code Path View
+
+```mermaid
+flowchart TD
+   A[app/api/uploads/route.ts\nPOST upload] --> B[lib/storage.ts\nuploadSourceFile]
+   B --> C[Blob upload + queue enqueue]
+
+   C --> D[worker/process-upload.ts\nrunWorker / processMessage]
+   D --> E[lib/storage.ts\ngetMediaRecord / downloadSourceBlob]
+   D --> F[worker/process-upload.ts\nrunFfmpeg if source is not MP4]
+   D --> G[lib/storage.ts\nuploadProcessedMp4]
+   D --> H[lib/storage.ts\nbuildPlaybackUrl]
+
+   H --> I[worker/process-upload.ts\nanalyzeProcessedVideo]
+   I --> J[CONTENT_UNDERSTANDING_ANALYZER_URL\nfrom environment]
+   J --> K[Existing Content Understanding analyzer\nmanual portal-created resource]
+   K --> L[Analyzer operation result]
+
+   L --> M[lib/analysis.ts\nnormalizeAnalysisResult]
+   M --> N[lib/storage.ts\nupsertMediaRecord]
+   M --> O[lib/search.ts\nindexMediaRecord]
+
+   N --> P[app/api/dashboard/route.ts\nand asset detail pages]
+   O --> Q[app/search/page.tsx\nand search APIs]
+```
+
+## Supported Scripts
+
+Supported operational scripts in this repo:
+
+- [scripts/build-and-deploy-images-from-outputs.ps1](scripts/build-and-deploy-images-from-outputs.ps1)
+- [scripts/recreate-search-index.ps1](scripts/recreate-search-index.ps1)
+
+The repository intentionally does not rely on environment-specific deployment helper scripts with hardcoded subscription, region, or resource group values.
 
 ## Prerequisites
 
+For deployment and operations:
+
+- Azure CLI 2.60+
+- Bicep CLI via `az bicep`
 - Node.js 20+
 - npm 10+
-- Docker 24+
-- Azure CLI 2.60+
-- Azure subscription with permission to create resource groups and role assignments
+- Git
 
-## Local development
+For local application development:
 
-```bash
-npm install
-npm run dev
-```
+- Node.js 20+
+- npm 10+
 
-When cloud settings are missing, the app runs in demo mode. Demo records are stored at `/tmp/content-understanding-pipeline/demo-records.json`.
+For local worker execution outside Azure:
 
-## Security notes
+- FFmpeg available in `PATH`
 
-- For production Entra sign-in, set all auth values: `ENTRA_ID_CLIENT_ID`, `ENTRA_ID_CLIENT_SECRET`, `ENTRA_ID_TENANT_ID`, and `AUTH_SESSION_SECRET`.
-- Do not commit secrets. Use GitHub Secrets, Azure Key Vault, or Container App secret references.
-- `AUTH_SESSION_SECRET` is required whenever Entra auth is configured.
+## Required Azure Permissions
 
-## Set up Entra ID authentication
+The deploying identity must be able to:
 
-Use this section when you want real Microsoft Entra sign-in instead of demo mode.
+- create and update resource groups and resources in the target subscription/resource group
+- create managed identities
+- create Azure role assignments
+- create Cosmos DB SQL role assignments
 
-### 1) Create an app registration
+In practice, this usually means:
 
-Portal path:
+- `Contributor` on the target resource group or subscription
+- `User Access Administrator` or `Owner` on the same scope so Bicep can create role assignments
 
-1. Microsoft Entra ID
-2. App registrations
-3. New registration
-4. Supported account type: single tenant (recommended)
-5. Redirect URI (Web): `https://<your-web-fqdn>/api/auth/callback`
+For the manual Content Understanding analyzer creation step, the operator also needs portal access on the Azure AI Services account, such as:
 
-CLI alternative:
+- `Cognitive Services Contributor`
+- `Owner`
 
-```powershell
-$appName = "content-understanding-pipeline"
-$app = az ad app create --display-name $appName --sign-in-audience AzureADMyOrg -o json | ConvertFrom-Json
-$appId = $app.appId
-```
+## Runtime Configuration
 
-### 2) Add redirect URIs
-
-You must add at least the deployed URL callback:
-
-- `https://<your-web-fqdn>/api/auth/callback`
-
-Optional for local testing:
-
-- `http://localhost:3000/api/auth/callback`
-
-```powershell
-az ad app update --id $appId --web-redirect-uris "https://<your-web-fqdn>/api/auth/callback" "http://localhost:3000/api/auth/callback"
-```
-
-### 3) Create a client secret
-
-```powershell
-$secret = az ad app credential reset --id $appId --append --display-name "content-understanding-secret" --years 1 -o json | ConvertFrom-Json
-$clientSecret = $secret.password
-```
-
-Store this secret securely. Do not commit it.
-
-### 4) Collect tenant id and set app auth values
-
-```powershell
-$tenantId = az account show --query tenantId -o tsv
-$clientId = $appId
-
-# Use a strong random value for session signing.
-$authSessionSecret = [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Minimum 0 -Maximum 256 }))
-```
-
-### 5) Provide auth values during deployment
-
-For Bicep bootstrap deployments, set:
-
-- `authClientId`
-- `authClientSecret`
-- `authTenantId`
-- `authSessionSecret`
-
-For app runtime, these map to:
-
-- `ENTRA_ID_CLIENT_ID`
-- `ENTRA_ID_CLIENT_SECRET`
-- `ENTRA_ID_TENANT_ID`
-- `AUTH_SESSION_SECRET`
-
-## Environment variables
-
-### Frontend and API
-
-Required for cloud mode:
+### Required Application Settings
 
 - `APP_BASE_URL` or `NEXT_PUBLIC_APP_BASE_URL`
-- `NEXT_PUBLIC_APP_TITLE` (optional, defaults to `Content Understanding Hub`)
+- `NEXT_PUBLIC_APP_TITLE` optional, default `Content Understanding Hub`
 - `AZURE_STORAGE_ACCOUNT_URL`
-- `AZURE_STORAGE_UPLOAD_CONTAINER` (optional, default `incoming-avi`)
-- `AZURE_STORAGE_PROCESSED_CONTAINER` (optional, default `processed-mp4`)
-- `AZURE_STORAGE_QUEUE_NAME` (optional, default `video-processing`)
+- `AZURE_STORAGE_UPLOAD_CONTAINER` optional, default `incoming-avi`
+- `AZURE_STORAGE_PROCESSED_CONTAINER` optional, default `processed-mp4`
+- `AZURE_STORAGE_QUEUE_NAME` optional, default `video-processing`
 - `AZURE_COSMOS_ENDPOINT`
-- `AZURE_COSMOS_DATABASE` (optional, default `content-understanding`)
-- `AZURE_COSMOS_CONTAINER` (optional, default `media-records`)
-- `CONTENT_UNDERSTANDING_ENDPOINT`
-- `CONTENT_UNDERSTANDING_API_VERSION` (optional, default `2026-05-01`)
-- `CONTENT_UNDERSTANDING_ANALYZER_ID` (optional, default `project-analyzer`)
-- `CONTENT_UNDERSTANDING_SCOPE` (optional, default `https://cognitiveservices.azure.com/.default`)
+- `AZURE_COSMOS_DATABASE` optional, default `content-understanding`
+- `AZURE_COSMOS_CONTAINER` optional, default `media-records`
+- `CONTENT_UNDERSTANDING_ANALYZER_URL`
+- `CONTENT_UNDERSTANDING_SCOPE` optional, default `https://cognitiveservices.azure.com/.default`
 - `AZURE_AI_SEARCH_ENDPOINT`
-- `AZURE_AI_SEARCH_INDEX_NAME` (optional, default `content-understanding-assets`)
-- `AZURE_AI_SEARCH_API_VERSION` (optional, default `2024-07-01`)
+- `AZURE_AI_SEARCH_INDEX_NAME` optional, default `content-understanding-assets`
+- `AZURE_AI_SEARCH_API_VERSION` optional, default `2024-07-01`
 - `AZURE_FOUNDRY_ENDPOINT`
-- `AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT` (optional, default `text-embedding-3-small`)
-- `AZURE_FOUNDRY_EMBEDDING_API_VERSION` (optional, default `2024-05-01-preview`)
-- `AZURE_FOUNDRY_EMBEDDING_DIMENSIONS` (optional, default `1536`)
-- `AZURE_FOUNDRY_EMBEDDING_SCOPE` (optional, default `https://cognitiveservices.azure.com/.default`)
+- `AZURE_FOUNDRY_EMBEDDING_DEPLOYMENT` optional, default `text-embedding-3-large`
+- `AZURE_FOUNDRY_EMBEDDING_API_VERSION` optional, default `2024-05-01-preview`
+- `AZURE_FOUNDRY_EMBEDDING_DIMENSIONS` optional, default `1536`
+- `AZURE_FOUNDRY_EMBEDDING_SCOPE` optional, default `https://cognitiveservices.azure.com/.default`
 
 Optional:
 
@@ -142,64 +147,93 @@ Optional:
 - `AUTH_SESSION_SECRET`
 - `APPLICATIONINSIGHTS_CONNECTION_STRING`
 - `APPLICATIONINSIGHTS_ROLE_NAME`
-- `CONTENT_UNDERSTANDING_MAX_POLLS` (optional, default `40`)
-- `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` (optional, default `5000`)
-- `UPLOAD_WRITE_QUEUE_MESSAGE` (optional, default `false`)
-- `PLAYBACK_SAS_START_OFFSET_MINUTES` (optional)
-- `PLAYBACK_SAS_TTL_MINUTES` (optional)
+- `CONTENT_UNDERSTANDING_MAX_POLLS` optional, default `40`
+- `CONTENT_UNDERSTANDING_POLL_INTERVAL_MS` optional, default `5000`
+- `UPLOAD_WRITE_QUEUE_MESSAGE` optional, default `false`
+- `PLAYBACK_SAS_START_OFFSET_MINUTES` optional, default `5`
+- `PLAYBACK_SAS_TTL_MINUTES` optional, default `60`
+- `WORKER_POLL_INTERVAL_MS` optional, default `10000`
+- `WORKER_QUEUE_VISIBILITY_TIMEOUT` optional, default `300`
+- `WORKER_TMP_DIR` optional
 
-### Worker
+## Content Understanding Analyzer
 
-The worker uses the same storage, Cosmos, Content Understanding, Search, and embedding settings. Additional worker settings:
+This repository does not provision or mutate the analyzer itself.
 
-- `WORKER_POLL_INTERVAL_MS` (optional, default `10000`)
-- `WORKER_QUEUE_VISIBILITY_TIMEOUT` (optional, default `300`)
-- `WORKER_TMP_DIR` (optional)
-- `CONTENT_UNDERSTANDING_ANALYZER_DEFINITION` (optional JSON override for analyzer creation)
-- `CONTENT_UNDERSTANDING_BASE_ANALYZER_ID` (optional, default `prebuilt-video`)
-- `CONTENT_UNDERSTANDING_TEMPLATE_ID` (optional, default `prebuilt-videoSegment`)
-- `CONTENT_UNDERSTANDING_PROCESSING_LOCATION` (optional, default `geography`)
-- `CONTENT_UNDERSTANDING_COMPLETION_MODEL` (optional, default `gpt-4.1`)
-- `CONTENT_UNDERSTANDING_SCHEMA_ANALYZER_ID` (optional fallback analyzer id)
+Use [infra/content-understanding-analyzer.portal.json](infra/content-understanding-analyzer.portal.json) as the import body when creating the analyzer in the Content Understanding portal.
 
-## Commands
+Additional guidance is in [docs/content-understanding-analyzer.md](docs/content-understanding-analyzer.md).
 
-- `npm run dev` start the web app
-- `npm run lint` run ESLint
-- `npm run build` build the Next.js app
-- `npm run build:worker` compile the FFmpeg worker
-- `npm run worker` run the queue worker continuously
-- `npm run worker:once` process at most one queue message and exit
-- `./scripts/build-and-deploy-images-from-outputs.ps1 -ResourceGroup <rg>` build real images in ACR and update both container apps using deployment outputs
+After the analyzer exists, capture the analyzer URL in this form:
 
-## Deploy to Azure (script-driven full flow)
-
-This is the recommended end-to-end deployment path:
-
-1. create a new resource group and ACR
-2. run Bicep bootstrap with placeholder images
-3. run the post-bootstrap script to build real images in ACR and update both Container Apps
-4. verify web endpoint and container app health
-
-### 1) Sign in and choose your subscription
-
-```bash
-az login
-az account set --subscription "<subscription-id-or-name>"
+```text
+https://<account>.services.ai.azure.com/contentunderstanding/analyzers/<analyzerName>?api-version=2025-11-01
 ```
 
-### 2) Set deployment variables
+Use that value for:
 
-Use a unique suffix to avoid global naming collisions.
+- the Bicep parameter `contentUnderstandingAnalyzerUrl`
+- the worker container app setting `CONTENT_UNDERSTANDING_ANALYZER_URL`
+
+## Deployment Overview
+
+Recommended sequence:
+
+1. Create a resource group.
+2. Create an ACR.
+3. Deploy infrastructure with Bicep using placeholder container images.
+4. Create the Content Understanding analyzer manually in the CU portal using the included JSON.
+5. Update the deployment or container app settings with the analyzer URL.
+6. Build and roll out the real web and worker images using the image rollout script.
+7. Upload a file and verify end-to-end processing.
+
+## Bicep Deployment
+
+### Important Parameters
+
+Common required parameters:
+
+- `location`
+- `storageAccountName`
+- `cosmosAccountName`
+- `contentUnderstandingAccountName`
+- `aiSearchServiceName`
+- `webAppName`
+- `containerAppName`
+- `webContainerImage`
+- `workerContainerImage`
+- `containerRegistryName`
+- `containerRegistryLoginServer`
+
+Commonly important optional parameters:
+
+- `cosmosLocation`
+- `environmentName`
+- `contentUnderstandingAnalyzerUrl`
+- `foundryReasoningDeploymentName` default `gpt-5.2`
+- `foundryCompletionDeploymentName` default `gpt-4.1-mini`
+- `foundryEmbeddingDeploymentName` default `text-embedding-3-large`
+- `existingContainerAppsVnetName`
+- `existingContainerAppsSubnetName`
+- `existingContainerAppsVnetResourceGroup`
+- `containerAppsVnetName`
+- `containerAppsVnetAddressPrefix`
+- `containerAppsInfrastructureSubnetName`
+- `containerAppsInfrastructureSubnetAddressPrefix`
+- `authClientId`
+- `authClientSecret`
+- `authTenantId`
+- `authSessionSecret`
+
+### Example Deployment Variables
 
 ```powershell
-$location = "centralus"
+$location = "southcentralus"
 $suffix = Get-Date -Format "yyMMddHHmmss"
 
-$resourceGroup = "content-understanding-$location-$suffix"
-$acrName = "cu${suffix}acr"
+$resourceGroup = "content-understanding-$suffix"
 $deploymentName = "content-understanding-bootstrap-$suffix"
-
+$acrName = "cu${suffix}acr"
 $storageAccountName = "cu${suffix}st"
 $cosmosAccountName = "cu-$suffix-cosmos"
 $contentUnderstandingAccountName = "cu-$suffix-content"
@@ -208,55 +242,180 @@ $webAppName = "cu-$suffix-web"
 $workerAppName = "cu-$suffix-worker"
 $environmentName = "cu-$suffix-env"
 
-# Leave empty for demo mode, or set these from the Entra setup section above.
+$cosmosLocation = "westus3"
+$analyzerUrl = ""
+
+$containerAppsVnetName = "vnet"
+$containerAppsVnetAddressPrefix = "10.40.0.0/16"
+$containerAppsInfrastructureSubnetName = "infra"
+$containerAppsInfrastructureSubnetAddressPrefix = "10.40.0.0/23"
+
 $authClientId = ""
 $authClientSecret = ""
 $authTenantId = ""
 $authSessionSecret = ""
 ```
 
-### 3) Create resource group and ACR
+### Create Resource Group And ACR
 
 ```powershell
+az login
 az group create --name $resourceGroup --location $location
 
 az acr create `
-   --name $acrName `
-   --resource-group $resourceGroup `
-   --location $location `
-   --sku Basic `
-   --admin-enabled false
+  --name $acrName `
+  --resource-group $resourceGroup `
+  --location $location `
+  --sku Basic `
+  --admin-enabled false
 
 $acrLoginServer = az acr show --name $acrName --resource-group $resourceGroup --query loginServer -o tsv
 ```
 
-### 4) Bootstrap infrastructure with placeholder images
-
-This creates all cloud resources first, then image replacement is handled by the script in the next step.
+### Deploy Infrastructure With Placeholder Images
 
 ```powershell
 az deployment group create `
-   --name $deploymentName `
-   --resource-group $resourceGroup `
-   --template-file infra/main.bicep `
-   --parameters `
-      location=$location `
-      environmentName=$environmentName `
-      storageAccountName=$storageAccountName `
-      cosmosAccountName=$cosmosAccountName `
-      contentUnderstandingAccountName=$contentUnderstandingAccountName `
-      aiSearchServiceName=$searchServiceName `
-      webAppName=$webAppName `
-      containerAppName=$workerAppName `
-      webContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
-      workerContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
-      containerRegistryName=$acrName `
-      containerRegistryLoginServer=$acrLoginServer `
+  --name $deploymentName `
+  --resource-group $resourceGroup `
+  --template-file infra/main.bicep `
+  --parameters `
+    location=$location `
+    cosmosLocation=$cosmosLocation `
+    environmentName=$environmentName `
+    storageAccountName=$storageAccountName `
+    cosmosAccountName=$cosmosAccountName `
+    contentUnderstandingAccountName=$contentUnderstandingAccountName `
+    aiSearchServiceName=$searchServiceName `
+    webAppName=$webAppName `
+    containerAppName=$workerAppName `
+    webContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
+    workerContainerImage='mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' `
+    containerRegistryName=$acrName `
+    containerRegistryLoginServer=$acrLoginServer `
+    contentUnderstandingAnalyzerUrl=$analyzerUrl `
+    containerAppsVnetName=$containerAppsVnetName `
+    containerAppsVnetAddressPrefix=$containerAppsVnetAddressPrefix `
+    containerAppsInfrastructureSubnetName=$containerAppsInfrastructureSubnetName `
+    containerAppsInfrastructureSubnetAddressPrefix=$containerAppsInfrastructureSubnetAddressPrefix `
+    authClientId=$authClientId `
+    authClientSecret=$authClientSecret `
+    authTenantId=$authTenantId `
+    authSessionSecret=$authSessionSecret
+```
+
+If you are using an existing delegated subnet, pass:
+
+- `existingContainerAppsVnetName`
+- `existingContainerAppsSubnetName`
+- `existingContainerAppsVnetResourceGroup`
+
+and omit the new VNet/subnet parameters.
+
+## Manual Content Understanding Step
+
+After infrastructure deployment:
+
+1. Open the provisioned Azure AI Services account in the Content Understanding portal.
+2. Create or import an analyzer using [infra/content-understanding-analyzer.portal.json](infra/content-understanding-analyzer.portal.json).
+3. Copy the analyzer URL.
+4. Set `contentUnderstandingAnalyzerUrl` in a future Bicep deployment, or update `CONTENT_UNDERSTANDING_ANALYZER_URL` directly on the worker container app.
+
+For long-term configuration hygiene, prefer setting the Bicep parameter so future deployments preserve the value.
+
+## Build And Roll Out Application Images
+
+After the bootstrap deployment exists, run:
+
+```powershell
+./scripts/build-and-deploy-images-from-outputs.ps1 -ResourceGroup $resourceGroup -DeploymentName $deploymentName
+```
+
+What it does:
+
+- builds the web image in ACR
+- builds the worker image in ACR
+- updates both Container Apps to the new tags
+- prints the active web endpoint and latest revisions
+
+This script uses ACR build in Azure. Local Docker is not required.
+
+## Verification Checklist
+
+After rollout:
+
+1. Confirm both container apps are `Running`.
+2. Confirm the web app URL responds.
+3. Confirm `CONTENT_UNDERSTANDING_ANALYZER_URL` is set on the worker.
+4. Upload a video.
+5. Confirm the asset moves through `uploaded`, `converting`, `analyzing`, `indexing`, and `completed`, or `failed` if analysis/transcoding fails.
+6. Confirm search returns the newly indexed record.
+
+Useful commands:
+
+```powershell
+az containerapp show -g $resourceGroup -n $webAppName --query "{state:properties.runningStatus,revision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn}" -o json
+
+az containerapp show -g $resourceGroup -n $workerAppName --query "{state:properties.runningStatus,revision:properties.latestRevisionName}" -o json
+
+az containerapp logs show -g $resourceGroup -n $workerAppName --tail 200 --format text
+```
+
+## Search Rebuild
+
+If search is empty or you change index structure, rebuild the search index:
+
+```powershell
+./scripts/recreate-search-index.ps1 -ResourceGroup $resourceGroup -SearchServiceName $searchServiceName
+```
+
+## Local Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the web app:
+
+```bash
+npm run dev
+```
+
+Run the worker locally:
+
+```bash
+npm run build:worker
+npm run worker
+```
+
+The supported production path is Azure-backed. This repository no longer uses local demo persistence as a fallback for uploads and records.
+
+## Security Notes
+
+- Do not commit secrets.
+- Use Azure Key Vault or Container App secret references where possible.
+- `AUTH_SESSION_SECRET` is required whenever Entra ID authentication is enabled.
+- The Bicep template assigns application identities to the resources they need. The deploying identity still needs permission to create those role assignments.
+      existingContainerAppsVnetName=$existingContainerAppsVnetName `
+      existingContainerAppsSubnetName=$existingContainerAppsSubnetName `
+      existingContainerAppsVnetResourceGroup=$existingContainerAppsVnetResourceGroup `
+      containerAppsVnetName=$containerAppsVnetName `
+      containerAppsVnetAddressPrefix=$containerAppsVnetAddressPrefix `
+      containerAppsInfrastructureSubnetName=$containerAppsInfrastructureSubnetName `
+      containerAppsInfrastructureSubnetAddressPrefix=$containerAppsInfrastructureSubnetAddressPrefix `
       authClientId=$authClientId `
       authClientSecret=$authClientSecret `
       authTenantId=$authTenantId `
       authSessionSecret=$authSessionSecret
 ```
+
+   Networking behavior:
+
+   1. If `existingContainerAppsVnetName` and `existingContainerAppsSubnetName` are provided, the template uses that existing subnet.
+   2. If either is empty, the template creates `containerAppsVnetName` and `containerAppsInfrastructureSubnetName` and delegates the subnet to `Microsoft.App/environments`.
+   3. Web app ingress is public (`external: true`), worker has no public ingress.
 
 ### 5) Build images and update Container Apps via script
 
@@ -363,6 +522,18 @@ Optional auth values (recommended for production):
 - `authSessionSecret`
 
 If auth values are empty, the app runs in demo sign-in mode.
+
+Optional networking values:
+
+- `existingContainerAppsVnetName`
+- `existingContainerAppsSubnetName`
+- `existingContainerAppsVnetResourceGroup`
+- `containerAppsVnetName`
+- `containerAppsVnetAddressPrefix`
+- `containerAppsInfrastructureSubnetName`
+- `containerAppsInfrastructureSubnetAddressPrefix`
+
+If existing VNet/subnet values are provided, the template uses that subnet for the Container Apps environment. Otherwise, it creates a VNet and delegated infrastructure subnet.
 
 ### 5) Deploy infrastructure
 

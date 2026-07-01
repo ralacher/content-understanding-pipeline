@@ -8,8 +8,8 @@ export async function AuthPanel() {
   if (!authEnabled) {
     return (
       <div className="auth-panel demo-pill" title="Microsoft Entra auth is not configured in this environment.">
-        <span className="eyebrow">Demo mode</span>
-        <strong>No Entra config</strong>
+        <span className="eyebrow">Authentication</span>
+        <strong>Entra sign-in disabled</strong>
       </div>
     );
   }

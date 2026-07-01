@@ -22,50 +22,50 @@ This repository is prepared for customer-facing deployment with these assumption
 
 ```mermaid
 flowchart LR
-   User[User in Web UI] --> Upload[Upload video]
-   Upload --> Api[Next.js API]
-   Api --> Blob[Azure Storage upload container]
-   Api --> Queue[Azure Queue message]
+   user["User in Web UI"] --> upload["Upload video"]
+   upload --> api["Next.js API"]
+   api --> blob["Azure Storage upload container"]
+   api --> queue["Azure Queue message"]
 
-   Queue --> Worker[Worker container app]
-   Worker --> Source[Download source video]
-   Worker --> Convert[Convert to MP4 when needed]
-   Convert --> Processed[Azure Storage processed container]
-   Processed --> Analyze[Call Content Understanding analyzer URL]
-   Analyze --> Normalize[Normalize analysis result]
-   Normalize --> Cosmos[Persist media record in Cosmos DB]
-   Normalize --> Search[Index searchable document in Azure AI Search]
+   queue --> worker["Worker container app"]
+   worker --> source["Download source video"]
+   worker --> convert["Convert to MP4 when needed"]
+   convert --> processed["Azure Storage processed container"]
+   processed --> analyze["Call Content Understanding analyzer URL"]
+   analyze --> normalize["Normalize analysis result"]
+   normalize --> cosmos["Persist media record in Cosmos DB"]
+   normalize --> search["Index searchable document in Azure AI Search"]
 
-   Cosmos --> Dashboard[Dashboard and asset detail APIs]
-   Search --> SearchUi[Search UI]
-   Dashboard --> User
-   SearchUi --> User
+   cosmos --> dashboard["Dashboard and asset detail APIs"]
+   search --> searchUi["Search UI"]
+   dashboard --> user
+   searchUi --> user
 ```
 
 ## Detailed Code Path View
 
 ```mermaid
 flowchart TD
-   A[app/api/uploads/route.ts\nPOST upload] --> B[lib/storage.ts\nuploadSourceFile]
-   B --> C[Blob upload + queue enqueue]
+   A["app/api/uploads/route.ts<br/>POST upload"] --> B["lib/storage.ts<br/>uploadSourceFile"]
+   B --> C["Blob upload + queue enqueue"]
 
-   C --> D[worker/process-upload.ts\nrunWorker / processMessage]
-   D --> E[lib/storage.ts\ngetMediaRecord / downloadSourceBlob]
-   D --> F[worker/process-upload.ts\nrunFfmpeg if source is not MP4]
-   D --> G[lib/storage.ts\nuploadProcessedMp4]
-   D --> H[lib/storage.ts\nbuildPlaybackUrl]
+   C --> D["worker/process-upload.ts<br/>runWorker / processMessage"]
+   D --> E["lib/storage.ts<br/>getMediaRecord / downloadSourceBlob"]
+   D --> F["worker/process-upload.ts<br/>runFfmpeg if source is not MP4"]
+   D --> G["lib/storage.ts<br/>uploadProcessedMp4"]
+   D --> H["lib/storage.ts<br/>buildPlaybackUrl"]
 
-   H --> I[worker/process-upload.ts\nanalyzeProcessedVideo]
-   I --> J[CONTENT_UNDERSTANDING_ANALYZER_URL\nfrom environment]
-   J --> K[Existing Content Understanding analyzer\nmanual portal-created resource]
-   K --> L[Analyzer operation result]
+   H --> I["worker/process-upload.ts<br/>analyzeProcessedVideo"]
+   I --> J["CONTENT_UNDERSTANDING_ANALYZER_URL<br/>from environment"]
+   J --> K["Existing Content Understanding analyzer<br/>manual portal-created resource"]
+   K --> L["Analyzer operation result"]
 
-   L --> M[lib/analysis.ts\nnormalizeAnalysisResult]
-   M --> N[lib/storage.ts\nupsertMediaRecord]
-   M --> O[lib/search.ts\nindexMediaRecord]
+   L --> M["lib/analysis.ts<br/>normalizeAnalysisResult"]
+   M --> N["lib/storage.ts<br/>upsertMediaRecord"]
+   M --> O["lib/search.ts<br/>indexMediaRecord"]
 
-   N --> P[app/api/dashboard/route.ts\nand asset detail pages]
-   O --> Q[app/search/page.tsx\nand search APIs]
+   N --> P["app/api/dashboard/route.ts<br/>and asset detail pages"]
+   O --> Q["app/search/page.tsx<br/>and search APIs"]
 ```
 
 ## Supported Scripts
